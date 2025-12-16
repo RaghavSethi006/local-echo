@@ -1,13 +1,13 @@
 import { useState } from 'react';
 import { useP2P } from '@/contexts/P2PContext';
 import { cn } from '@/lib/utils';
-import { Plus, Hash, Settings, Wifi, WifiOff } from 'lucide-react';
+import { Plus, Hash, Settings, Wifi, WifiOff, MessageCircle, Users } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { CreateServerDialog } from './CreateServerDialog';
 import { JoinServerDialog } from './JoinServerDialog';
 
 export function ServerSidebar() {
-  const { servers, currentServer, selectServer, connectionStatus } = useP2P();
+  const { servers, currentServer, selectServer, connectionStatus, viewMode, setViewMode, dmConversations } = useP2P();
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showJoinDialog, setShowJoinDialog] = useState(false);
 
@@ -25,6 +25,9 @@ export function ServerSidebar() {
   };
 
   const StatusIcon = getStatusIcon();
+  
+  // Count total unread DMs
+  const totalUnreadDMs = dmConversations.reduce((sum, conv) => sum + conv.unreadCount, 0);
 
   return (
     <aside className="w-[72px] bg-sidebar flex flex-col items-center py-3 gap-2 border-r border-sidebar-border">
@@ -50,7 +53,34 @@ export function ServerSidebar() {
         </TooltipContent>
       </Tooltip>
 
-      <div className="w-8 h-[2px] bg-sidebar-border rounded-full mb-2" />
+      {/* DM Button */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            onClick={() => setViewMode('dms')}
+            className={cn(
+              "relative w-12 h-12 rounded-2xl flex items-center justify-center",
+              "font-semibold transition-all duration-200",
+              "hover:rounded-xl",
+              viewMode === 'dms'
+                ? "bg-primary text-primary-foreground rounded-xl"
+                : "bg-secondary text-secondary-foreground hover:bg-primary hover:text-primary-foreground"
+            )}
+          >
+            <MessageCircle className="w-5 h-5" />
+            {totalUnreadDMs > 0 && (
+              <div className="absolute -bottom-1 -right-1 min-w-[18px] h-[18px] rounded-full bg-destructive text-destructive-foreground text-xs font-bold flex items-center justify-center px-1">
+                {totalUnreadDMs > 99 ? '99+' : totalUnreadDMs}
+              </div>
+            )}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="right">
+          <p>Direct Messages</p>
+        </TooltipContent>
+      </Tooltip>
+
+      <div className="w-8 h-[2px] bg-sidebar-border rounded-full my-1" />
 
       {/* Server List */}
       {servers.map((server) => (
@@ -62,7 +92,7 @@ export function ServerSidebar() {
                 "w-12 h-12 rounded-2xl flex items-center justify-center",
                 "font-semibold text-lg transition-all duration-200",
                 "hover:rounded-xl",
-                currentServer?.id === server.id
+                currentServer?.id === server.id && viewMode === 'servers'
                   ? "bg-primary text-primary-foreground rounded-xl"
                   : "bg-secondary text-secondary-foreground hover:bg-primary hover:text-primary-foreground"
               )}

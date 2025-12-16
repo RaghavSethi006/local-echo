@@ -132,6 +132,73 @@ When the host disconnects:
 }
 ```
 
+## 💬 Direct Messages (DMs)
+
+### DM Routing Logic
+
+DMs are private 1-to-1 conversations that exist outside of servers. The routing prioritizes direct connections:
+
+```
+Priority 1: Direct P2P Connection
+┌────────┐                      ┌────────┐
+│ User A │ ◄──── WebRTC ────► │ User B │
+└────────┘    DataChannel       └────────┘
+
+Priority 2: Host-Assisted Relay (Fallback)
+┌────────┐        ┌──────┐        ┌────────┐
+│ User A │ ──► │ HOST │ ──► │ User B │
+└────────┘   encrypted   └──────┘   encrypted   └────────┘
+              blob                    blob
+```
+
+### Why Direct Channels Are Preferred
+
+1. **Lower Latency** — No intermediate hop through the host
+2. **Reduced Host Load** — Host doesn't process DM traffic
+3. **Better Privacy** — Host never sees encrypted payload
+4. **Resilience** — DMs work even if host goes offline
+
+### DM Connection Flow
+
+1. User A opens DM with User B
+2. System checks for existing direct channel
+3. If none exists:
+   - Create new WebRTC peer connection
+   - Exchange SDP via existing server connection (signaling)
+   - Establish dedicated DM data channel
+4. Messages flow directly between peers
+
+### Security Guarantees
+
+- **End-to-End Encryption** — Using ECDH key exchange + AES-256-GCM
+- **Per-DM Session Keys** — Each conversation has unique keys
+- **Host Cannot Decrypt** — Relay payloads are encrypted blobs
+- **No Persistence** — DMs only exist in memory
+
+### Fallback Relay Behavior
+
+When direct connection fails (complex NAT, firewall):
+1. System detects connection failure
+2. Falls back to relay through server host
+3. Messages are encrypted before relay
+4. Host treats payload as opaque bytes
+5. UI shows "Relayed" indicator
+
+### DM Message Schema
+
+```typescript
+{
+  id: string;          // Unique message ID
+  type: 'DM';          // Message type
+  from: PeerId;        // Sender info
+  to: PeerId;          // Recipient info
+  content: string;     // Message content
+  timestamp: number;   // Unix timestamp
+  encrypted?: boolean; // Always true for DMs
+  read?: boolean;      // Read receipt
+}
+```
+
 ## 🔐 Security Model
 
 - **Key Generation:** ECDH P-256 curve for key exchange
@@ -159,6 +226,7 @@ This design represents the optimal balance for a browser-based cloudless chat:
 4. **Zero infrastructure cost** — STUN servers are free and stateless
 5. **Graceful degradation** — Works on LAN even if internet fails mid-session
 6. **Host migration** — No single point of failure after initial connection
+7. **Private DMs** — Direct peer connections bypass the host when possible
 
 ### What We Sacrificed
 
@@ -166,6 +234,7 @@ This design represents the optimal balance for a browser-based cloudless chat:
 - **Persistence** — Messages exist only in memory
 - **Large scale** — Star topology limits to ~50 peers practically
 - **Voice/Video** — Would require TURN servers for reliability
+- **Group DMs** — Currently limited to 1-to-1
 
 ## 🚀 Future Enhancements (Native App)
 
@@ -176,6 +245,7 @@ With Tauri or Electron, we could add:
 - [ ] Local database for message persistence
 - [ ] Store-and-forward for offline delivery
 - [ ] QR code scanning for easy joins
+- [ ] Group DMs with multi-party encryption
 
 ## 📝 License
 

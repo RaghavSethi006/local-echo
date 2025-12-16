@@ -17,6 +17,36 @@ export interface Message {
   encrypted?: boolean;
 }
 
+// Direct Message Types
+export interface DirectMessage {
+  id: string;
+  type: 'DM';
+  from: PeerId;
+  to: PeerId;
+  content: string;
+  timestamp: number;
+  encrypted?: boolean;
+  read?: boolean;
+}
+
+export interface DMConversation {
+  peerId: PeerId;
+  messages: DirectMessage[];
+  lastMessage?: DirectMessage;
+  unreadCount: number;
+  isTyping: boolean;
+  connectionType: 'direct' | 'relay' | 'disconnected';
+  lastSeen: number;
+}
+
+export interface DMConnectionInfo {
+  peerId: string;
+  connection: RTCPeerConnection | null;
+  dataChannel: RTCDataChannel | null;
+  connectionType: 'direct' | 'relay';
+  sessionKey?: CryptoKey;
+}
+
 export interface Channel {
   id: string;
   name: string;
@@ -36,6 +66,7 @@ export interface Server {
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'host';
 export type PeerStatus = 'online' | 'idle' | 'offline';
+export type ViewMode = 'servers' | 'dms';
 
 export interface PeerConnection {
   peerId: PeerId;
@@ -46,7 +77,7 @@ export interface PeerConnection {
 }
 
 export interface SignalingMessage {
-  type: 'offer' | 'answer' | 'ice-candidate' | 'peer-info' | 'host-migration';
+  type: 'offer' | 'answer' | 'ice-candidate' | 'peer-info' | 'host-migration' | 'dm-offer' | 'dm-answer';
   from: PeerId;
   to?: string;
   payload: any;
@@ -60,7 +91,12 @@ export interface P2PEvent {
     | 'host-changed'
     | 'channel-created'
     | 'sync-request'
-    | 'sync-response';
+    | 'sync-response'
+    | 'dm-message'
+    | 'dm-typing'
+    | 'dm-read'
+    | 'dm-connection-request'
+    | 'dm-connection-response';
   payload: any;
   seq?: number;
   timestamp: number;
@@ -74,9 +110,11 @@ export interface NetworkState {
   servers: Server[];
   currentServerId: string | null;
   currentChannelId: string | null;
-  messages: Map<string, Message[]>; // channelId -> messages
+  messages: Map<string, Message[]>;
   connectionStatus: ConnectionStatus;
   sequenceNumber: number;
+  dmConversations: Map<string, DMConversation>;
+  dmConnections: Map<string, DMConnectionInfo>;
 }
 
 export interface InviteCode {
