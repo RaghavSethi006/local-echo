@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { P2PNetwork } from '@/lib/p2p-network';
-import { Server, Channel, Message, PeerId, P2PEvent, ConnectionStatus } from '@/types/p2p';
+import { Server, Channel, Message, PeerId, P2PEvent, ConnectionStatus, ViewMode, DMConversation, DirectMessage } from '@/types/p2p';
 
 interface P2PContextType {
   network: P2PNetwork | null;
@@ -13,6 +13,16 @@ interface P2PContextType {
   messages: Message[];
   onlinePeers: PeerId[];
   
+  // View mode
+  viewMode: ViewMode;
+  setViewMode: (mode: ViewMode) => void;
+  
+  // DM State
+  dmConversations: DMConversation[];
+  currentDMPeer: PeerId | null;
+  dmMessages: DirectMessage[];
+  availablePeersForDM: PeerId[];
+  
   // Actions
   initialize: (username: string) => Promise<void>;
   createServer: (name: string) => Promise<Server>;
@@ -22,6 +32,13 @@ interface P2PContextType {
   sendMessage: (content: string) => void;
   generateInvite: () => Promise<string>;
   disconnect: () => void;
+  
+  // DM Actions
+  openDM: (peer: PeerId) => void;
+  sendDM: (content: string) => void;
+  sendDMTyping: (isTyping: boolean) => void;
+  markDMAsRead: () => void;
+  startNewDM: (peer: PeerId) => void;
 }
 
 const P2PContext = createContext<P2PContextType | null>(null);
@@ -36,9 +53,19 @@ export function P2PProvider({ children }: { children: ReactNode }) {
   const [currentChannelId, setCurrentChannelId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [onlinePeers, setOnlinePeers] = useState<PeerId[]>([]);
+  
+  // View mode (servers or DMs)
+  const [viewMode, setViewMode] = useState<ViewMode>('servers');
+  
+  // DM State
+  const [dmConversations, setDmConversations] = useState<DMConversation[]>([]);
+  const [currentDMPeerId, setCurrentDMPeerId] = useState<string | null>(null);
+  const [dmMessages, setDmMessages] = useState<DirectMessage[]>([]);
+  const [availablePeersForDM, setAvailablePeersForDM] = useState<PeerId[]>([]);
 
   const currentServer = servers.find(s => s.id === currentServerId) || null;
   const currentChannel = currentServer?.channels.find(c => c.id === currentChannelId) || null;
+  const currentDMPeer = dmConversations.find(c => c.peerId.id === currentDMPeerId)?.peerId || null;
 
   // Handle P2P events
   const handleEvent = useCallback((event: P2PEvent) => {
@@ -62,18 +89,36 @@ export function P2PProvider({ children }: { children: ReactNode }) {
           if (prev.find(p => p.id === peer.id)) return prev;
           return [...prev, peer];
         });
+        // Update available peers for DM
+        if (network) {
+          setAvailablePeersForDM(network.getAvailablePeersForDM());
+        }
         break;
       case 'peer-left':
         setOnlinePeers(prev => prev.filter(p => p.id !== (event.payload as PeerId).id));
         break;
       case 'host-changed':
-        // Refresh connection status
         if (network) {
           setConnectionStatus(network.getConnectionStatus());
         }
         break;
+      case 'dm-message':
+        // Refresh DM conversations and messages
+        if (network) {
+          setDmConversations(network.getDMConversations());
+          if (currentDMPeerId) {
+            setDmMessages(network.getDMMessages(currentDMPeerId));
+          }
+        }
+        break;
+      case 'dm-typing':
+        // Refresh to get typing state
+        if (network) {
+          setDmConversations(network.getDMConversations());
+        }
+        break;
     }
-  }, [currentServerId, currentChannelId, network]);
+  }, [currentServerId, currentChannelId, network, currentDMPeerId]);
 
   // Subscribe to events when network changes
   useEffect(() => {
@@ -102,6 +147,8 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     setConnectionStatus(network.getConnectionStatus());
     setOnlinePeers(network.getOnlinePeers());
     setMessages([]);
+    setViewMode('servers');
+    setAvailablePeersForDM(network.getAvailablePeersForDM());
     
     return server;
   }, [network]);
@@ -109,11 +156,8 @@ export function P2PProvider({ children }: { children: ReactNode }) {
   const joinServer = useCallback(async (inviteCode: string) => {
     if (!network) throw new Error('Network not initialized');
     
-    // In a real implementation, this would involve WebRTC signaling
-    // For demo purposes, we'll simulate joining
     console.log('[P2P] Joining server with invite:', inviteCode);
     
-    // Decode invite to get server info
     try {
       const invite = JSON.parse(atob(inviteCode));
       const server: Server = {
@@ -128,17 +172,17 @@ export function P2PProvider({ children }: { children: ReactNode }) {
         createdAt: Date.now(),
       };
       
-      // For demo, add server locally
       setServers(prev => [...prev, server]);
       setCurrentServerId(server.id);
       setCurrentChannelId('general');
       setConnectionStatus('connecting');
       setOnlinePeers([network.getLocalPeer()]);
       setMessages([]);
+      setViewMode('servers');
       
-      // Simulate connection delay
       setTimeout(() => {
         setConnectionStatus('connected');
+        setAvailablePeersForDM(network.getAvailablePeersForDM());
       }, 1000);
     } catch (error) {
       console.error('Invalid invite code');
@@ -148,6 +192,8 @@ export function P2PProvider({ children }: { children: ReactNode }) {
 
   const selectServer = useCallback((serverId: string) => {
     setCurrentServerId(serverId);
+    setCurrentDMPeerId(null);
+    setViewMode('servers');
     const server = servers.find(s => s.id === serverId);
     if (server) {
       setCurrentChannelId(server.channels[0]?.id || null);
@@ -176,6 +222,45 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     return network.generateInvite(currentServerId);
   }, [network, currentServerId]);
 
+  // DM Actions
+  const openDM = useCallback((peer: PeerId) => {
+    if (!network) return;
+    
+    network.getOrCreateDMConversation(peer);
+    network.initiateDMConnection(peer.id);
+    
+    setCurrentDMPeerId(peer.id);
+    setCurrentServerId(null);
+    setCurrentChannelId(null);
+    setViewMode('dms');
+    setDmConversations(network.getDMConversations());
+    setDmMessages(network.getDMMessages(peer.id));
+    network.markDMAsRead(peer.id);
+  }, [network]);
+
+  const startNewDM = useCallback((peer: PeerId) => {
+    openDM(peer);
+  }, [openDM]);
+
+  const sendDM = useCallback((content: string) => {
+    if (!network || !currentDMPeerId) return;
+    
+    network.sendDM(currentDMPeerId, content);
+    setDmMessages(network.getDMMessages(currentDMPeerId));
+    setDmConversations(network.getDMConversations());
+  }, [network, currentDMPeerId]);
+
+  const sendDMTyping = useCallback((isTyping: boolean) => {
+    if (!network || !currentDMPeerId) return;
+    network.sendDMTyping(currentDMPeerId, isTyping);
+  }, [network, currentDMPeerId]);
+
+  const markDMAsRead = useCallback(() => {
+    if (!network || !currentDMPeerId) return;
+    network.markDMAsRead(currentDMPeerId);
+    setDmConversations(network.getDMConversations());
+  }, [network, currentDMPeerId]);
+
   const disconnect = useCallback(() => {
     if (network) {
       network.disconnect();
@@ -189,6 +274,10 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     setCurrentChannelId(null);
     setMessages([]);
     setOnlinePeers([]);
+    setDmConversations([]);
+    setCurrentDMPeerId(null);
+    setDmMessages([]);
+    setViewMode('servers');
   }, [network]);
 
   return (
@@ -203,6 +292,12 @@ export function P2PProvider({ children }: { children: ReactNode }) {
         currentChannel,
         messages,
         onlinePeers,
+        viewMode,
+        setViewMode,
+        dmConversations,
+        currentDMPeer,
+        dmMessages,
+        availablePeersForDM,
         initialize,
         createServer,
         joinServer,
@@ -211,6 +306,11 @@ export function P2PProvider({ children }: { children: ReactNode }) {
         sendMessage,
         generateInvite,
         disconnect,
+        openDM,
+        sendDM,
+        sendDMTyping,
+        markDMAsRead,
+        startNewDM,
       }}
     >
       {children}
