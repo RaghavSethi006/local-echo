@@ -84,18 +84,16 @@ export function P2PProvider({ children }: { children: ReactNode }) {
         }
         break;
       case 'peer-joined':
-        setOnlinePeers(prev => {
-          const peer = event.payload as PeerId;
-          if (prev.find(p => p.id === peer.id)) return prev;
-          return [...prev, peer];
-        });
-        // Update available peers for DM
         if (network) {
+          setOnlinePeers(network.getOnlinePeers());
+          setServers(network.getServers());
           setAvailablePeersForDM(network.getAvailablePeersForDM());
         }
         break;
       case 'peer-left':
-        setOnlinePeers(prev => prev.filter(p => p.id !== (event.payload as PeerId).id));
+        if (network) {
+          setOnlinePeers(network.getOnlinePeers());
+        }
         break;
       case 'host-changed':
         if (network) {
@@ -103,7 +101,6 @@ export function P2PProvider({ children }: { children: ReactNode }) {
         }
         break;
       case 'dm-message':
-        // Refresh DM conversations and messages
         if (network) {
           setDmConversations(network.getDMConversations());
           if (currentDMPeerId) {
@@ -112,9 +109,19 @@ export function P2PProvider({ children }: { children: ReactNode }) {
         }
         break;
       case 'dm-typing':
-        // Refresh to get typing state
         if (network) {
           setDmConversations(network.getDMConversations());
+        }
+        break;
+      default:
+        // Handle sync-response to refresh all state
+        if ((event.type as string) === 'sync-response' && network) {
+          setServers(network.getServers());
+          setOnlinePeers(network.getOnlinePeers());
+          setAvailablePeersForDM(network.getAvailablePeersForDM());
+          if (currentServerId && currentChannelId) {
+            setMessages(network.getMessages(currentServerId, currentChannelId));
+          }
         }
         break;
     }
