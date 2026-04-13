@@ -156,37 +156,24 @@ export function P2PProvider({ children }: { children: ReactNode }) {
   const joinServer = useCallback(async (inviteCode: string) => {
     if (!network) throw new Error('Network not initialized');
     
-    console.log('[P2P] Joining server with invite:', inviteCode);
+    console.log('[P2P] Joining server with invite code');
+    setConnectionStatus('connecting');
     
     try {
-      const invite = JSON.parse(atob(inviteCode));
-      const server: Server = {
-        id: invite.serverId,
-        name: invite.serverName,
-        channels: [
-          { id: 'general', name: 'general', type: 'text' },
-          { id: 'random', name: 'random', type: 'text' },
-        ],
-        members: [network.getLocalPeer()],
-        hostId: invite.hostId?.id || 'host',
-        createdAt: Date.now(),
-      };
+      const server = await network.joinServer(inviteCode);
       
-      setServers(prev => [...prev, server]);
+      setServers(network.getServers());
       setCurrentServerId(server.id);
-      setCurrentChannelId('general');
-      setConnectionStatus('connecting');
-      setOnlinePeers([network.getLocalPeer()]);
-      setMessages([]);
+      setCurrentChannelId(server.channels[0]?.id || 'general');
+      setConnectionStatus(network.getConnectionStatus());
+      setOnlinePeers(network.getOnlinePeers());
+      setMessages(network.getMessages(server.id, server.channels[0]?.id || 'general'));
       setViewMode('servers');
-      
-      setTimeout(() => {
-        setConnectionStatus('connected');
-        setAvailablePeersForDM(network.getAvailablePeersForDM());
-      }, 1000);
+      setAvailablePeersForDM(network.getAvailablePeersForDM());
     } catch (error) {
-      console.error('Invalid invite code');
-      throw new Error('Invalid invite code');
+      setConnectionStatus('disconnected');
+      console.error('Failed to join server:', error);
+      throw error;
     }
   }, [network]);
 
