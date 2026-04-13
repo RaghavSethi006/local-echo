@@ -84,18 +84,16 @@ export function P2PProvider({ children }: { children: ReactNode }) {
         }
         break;
       case 'peer-joined':
-        setOnlinePeers(prev => {
-          const peer = event.payload as PeerId;
-          if (prev.find(p => p.id === peer.id)) return prev;
-          return [...prev, peer];
-        });
-        // Update available peers for DM
         if (network) {
+          setOnlinePeers(network.getOnlinePeers());
+          setServers(network.getServers());
           setAvailablePeersForDM(network.getAvailablePeersForDM());
         }
         break;
       case 'peer-left':
-        setOnlinePeers(prev => prev.filter(p => p.id !== (event.payload as PeerId).id));
+        if (network) {
+          setOnlinePeers(network.getOnlinePeers());
+        }
         break;
       case 'host-changed':
         if (network) {
@@ -103,7 +101,6 @@ export function P2PProvider({ children }: { children: ReactNode }) {
         }
         break;
       case 'dm-message':
-        // Refresh DM conversations and messages
         if (network) {
           setDmConversations(network.getDMConversations());
           if (currentDMPeerId) {
@@ -112,9 +109,19 @@ export function P2PProvider({ children }: { children: ReactNode }) {
         }
         break;
       case 'dm-typing':
-        // Refresh to get typing state
         if (network) {
           setDmConversations(network.getDMConversations());
+        }
+        break;
+      default:
+        // Handle sync-response to refresh all state
+        if ((event.type as string) === 'sync-response' && network) {
+          setServers(network.getServers());
+          setOnlinePeers(network.getOnlinePeers());
+          setAvailablePeersForDM(network.getAvailablePeersForDM());
+          if (currentServerId && currentChannelId) {
+            setMessages(network.getMessages(currentServerId, currentChannelId));
+          }
         }
         break;
     }
@@ -156,37 +163,24 @@ export function P2PProvider({ children }: { children: ReactNode }) {
   const joinServer = useCallback(async (inviteCode: string) => {
     if (!network) throw new Error('Network not initialized');
     
-    console.log('[P2P] Joining server with invite:', inviteCode);
+    console.log('[P2P] Joining server with invite code');
+    setConnectionStatus('connecting');
     
     try {
-      const invite = JSON.parse(atob(inviteCode));
-      const server: Server = {
-        id: invite.serverId,
-        name: invite.serverName,
-        channels: [
-          { id: 'general', name: 'general', type: 'text' },
-          { id: 'random', name: 'random', type: 'text' },
-        ],
-        members: [network.getLocalPeer()],
-        hostId: invite.hostId?.id || 'host',
-        createdAt: Date.now(),
-      };
+      const server = await network.joinServer(inviteCode);
       
-      setServers(prev => [...prev, server]);
+      setServers(network.getServers());
       setCurrentServerId(server.id);
-      setCurrentChannelId('general');
-      setConnectionStatus('connecting');
-      setOnlinePeers([network.getLocalPeer()]);
-      setMessages([]);
+      setCurrentChannelId(server.channels[0]?.id || 'general');
+      setConnectionStatus(network.getConnectionStatus());
+      setOnlinePeers(network.getOnlinePeers());
+      setMessages(network.getMessages(server.id, server.channels[0]?.id || 'general'));
       setViewMode('servers');
-      
-      setTimeout(() => {
-        setConnectionStatus('connected');
-        setAvailablePeersForDM(network.getAvailablePeersForDM());
-      }, 1000);
+      setAvailablePeersForDM(network.getAvailablePeersForDM());
     } catch (error) {
-      console.error('Invalid invite code');
-      throw new Error('Invalid invite code');
+      setConnectionStatus('disconnected');
+      console.error('Failed to join server:', error);
+      throw error;
     }
   }, [network]);
 

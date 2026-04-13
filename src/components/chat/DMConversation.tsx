@@ -11,7 +11,7 @@ export function DMConversation() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [content, setContent] = useState('');
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const currentConversation = dmConversations.find(c => c.peerId.id === currentDMPeer?.id);
 
