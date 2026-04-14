@@ -15,6 +15,7 @@ import {
   DMConversation,
 } from '@/types/p2p';
 import { generateId, generateKeyPair, KeyPair } from './crypto';
+import * as Storage from './storage';
 
 type EventCallback = (event: P2PEvent) => void;
 
@@ -40,10 +41,15 @@ export class P2PNetwork {
 
   // DM state
   private dmConversations: Map<string, DMConversation> = new Map();
+  
+  // Persistence flags
+  private persistenceReady: boolean = false;
+  private pendingSaves: Set<string> = new Set();
+  private saveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(username: string) {
+  constructor(username: string, existingId?: string) {
     this.localPeer = {
-      id: generateId(),
+      id: existingId || generateId(),
       username,
     };
   }
