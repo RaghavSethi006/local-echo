@@ -830,7 +830,8 @@ export class P2PNetwork {
             lastSeen: conv.lastSeen,
           }));
           if (conv.messages.length > 0) {
-            promises.push(Storage.saveDMMessages(conv.messages));
+            const msgsWithLocal = conv.messages.map(m => ({ ...m, _localPeerId: this.localPeer.id }));
+            promises.push(Storage.saveDMMessages(msgsWithLocal));
           }
         }
       }
