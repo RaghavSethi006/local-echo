@@ -122,6 +122,7 @@ export class P2PNetwork {
     });
 
     console.log('[P2P] Created server:', server.name, '| Host peer ID:', this.localPeer.id);
+    this.scheduleSave('servers');
     return server;
   }
 
@@ -360,6 +361,7 @@ export class P2PNetwork {
       channelMessages.push(message);
       channelMessages.sort((a, b) => a.seq - b.seq);
       this.messages.set(key, channelMessages);
+      this.scheduleSave('messages');
 
       this.emitEvent({ type: 'message', payload: message, timestamp: Date.now() });
 
@@ -471,6 +473,7 @@ export class P2PNetwork {
     const channelMessages = this.messages.get(key) || [];
     channelMessages.push(message);
     this.messages.set(key, channelMessages);
+    this.scheduleSave('messages');
 
     // Send
     if (this.isHost) {
@@ -610,6 +613,7 @@ export class P2PNetwork {
     conv.messages.push(dm);
     conv.lastMessage = dm;
     this.dmConversations.set(toPeerId, conv);
+    this.scheduleSave('dms');
 
     // Send - try direct connection first, then relay through host
     const entry = this.connections.get(toPeerId);
@@ -646,6 +650,7 @@ export class P2PNetwork {
       conv.lastMessage = dm;
       conv.unreadCount++;
       this.dmConversations.set(dm.from.id, conv);
+      this.scheduleSave('dms');
       this.emitEvent({ type: 'dm-message', payload: dm, timestamp: Date.now() });
     }
   }
