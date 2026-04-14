@@ -204,8 +204,10 @@ export async function saveDMMessages(messages: any[]): Promise<void> {
   const tx = db.transaction('dmMessages', 'readwrite');
   const store = tx.objectStore('dmMessages');
   messages.forEach(msg => {
-    // Add peerId index field for querying
-    const stored = { ...msg, peerId: msg.from?.id || msg.to?.id };
+    // Store with conversationPeerId — the OTHER person's ID
+    const localId = msg._localPeerId; // set by caller
+    const otherPeerId = msg.from?.id === localId ? msg.to?.id : msg.from?.id;
+    const stored = { ...msg, peerId: otherPeerId || msg.from?.id || msg.to?.id };
     store.put(stored);
   });
   return new Promise((resolve, reject) => {
