@@ -6,9 +6,10 @@ import { toast } from 'sonner';
 import { Loader2, Shield, Wifi, Lock, Users } from 'lucide-react';
 
 export function UsernameSetup() {
-  const { initialize } = useP2P();
+  const { initialize, hasStoredIdentity, restoreSession } = useP2P();
   const [username, setUsername] = useState('');
   const [isInitializing, setIsInitializing] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -25,6 +26,18 @@ export function UsernameSetup() {
       toast.error('Failed to initialize. Please try again.');
     } finally {
       setIsInitializing(false);
+    }
+  };
+
+  const handleRestore = async () => {
+    setIsRestoring(true);
+    try {
+      await restoreSession();
+      toast.success('Session restored! Your chats are back.');
+    } catch (error) {
+      toast.error('Failed to restore session. Please create a new one.');
+    } finally {
+      setIsRestoring(false);
     }
   };
 
@@ -79,6 +92,32 @@ export function UsernameSetup() {
               )}
             </Button>
           </form>
+
+          {hasStoredIdentity && (
+            <div className="mt-4 pt-4 border-t border-border">
+              <Button
+                onClick={handleRestore}
+                variant="outline"
+                className="w-full h-12 text-base"
+                disabled={isRestoring}
+              >
+                {isRestoring ? (
+                  <>
+                    <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                    Restoring...
+                  </>
+                ) : (
+                  <>
+                    <Users className="w-5 h-5 mr-2" />
+                    Resume Previous Session
+                  </>
+                )}
+              </Button>
+              <p className="text-xs text-muted-foreground mt-2 text-center">
+                Your previous chats and servers are still saved locally.
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Features */}
@@ -99,7 +138,7 @@ export function UsernameSetup() {
 
         {/* Info */}
         <p className="text-xs text-center text-muted-foreground">
-          All data stays on your device. When you close the app, it's gone forever.
+          All data stays on your device. Messages persist locally between sessions.
         </p>
       </div>
     </div>
