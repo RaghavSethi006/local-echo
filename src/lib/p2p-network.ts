@@ -198,6 +198,7 @@ export class P2PNetwork {
         };
 
         this.servers.set(server.id, server);
+        this.scheduleSave('servers');
         server.channels.forEach(ch => {
           this.messages.set(`${server.id}:${ch.id}`, []);
         });
