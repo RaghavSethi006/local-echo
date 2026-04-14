@@ -767,4 +767,142 @@ export class P2PNetwork {
     this.hostId = null;
     this.hostConn = null;
   }
+
+  // ==================== PERSISTENCE ====================
+
+  private scheduleSave(type: string): void {
+    this.pendingSaves.add(type);
+    if (this.saveDebounceTimer) clearTimeout(this.saveDebounceTimer);
+    this.saveDebounceTimer = setTimeout(() => this.flushSaves(), 300);
+  }
+
+  private async flushSaves(): Promise<void> {
+    const saves = new Set(this.pendingSaves);
+    this.pendingSaves.clear();
+
+    try {
+      const promises: Promise<void>[] = [];
+
+      if (saves.has('identity')) {
+        promises.push(Storage.saveIdentity({
+          peerId: this.localPeer.id,
+          username: this.localPeer.username,
+          publicKey: this.localPeer.publicKey,
+        }));
+      }
+
+      if (saves.has('servers')) {
+        for (const server of this.servers.values()) {
+          promises.push(Storage.saveServer({
+            id: server.id,
+            name: server.name,
+            channels: server.channels,
+            hostId: server.hostId,
+            createdAt: server.createdAt,
+            lastHostPeerId: server.hostId,
+          }));
+        }
+      }
+
+      if (saves.has('messages')) {
+        for (const [key, msgs] of this.messages.entries()) {
+          if (msgs.length > 0) {
+            promises.push(Storage.saveMessages(msgs));
+          }
+        }
+      }
+
+      if (saves.has('dms')) {
+        for (const [peerId, conv] of this.dmConversations.entries()) {
+          promises.push(Storage.saveDMConversation({
+            peerId: conv.peerId.id,
+            peerUsername: conv.peerId.username,
+            peerPublicKey: conv.peerId.publicKey,
+            messages: [],
+            lastSeen: conv.lastSeen,
+          }));
+          if (conv.messages.length > 0) {
+            promises.push(Storage.saveDMMessages(conv.messages));
+          }
+        }
+      }
+
+      await Promise.all(promises);
+    } catch (err) {
+      console.error('[P2P] Persistence error:', err);
+    }
+  }
+
+  // Load persisted data into memory
+  async loadPersistedData(): Promise<void> {
+    try {
+      // Load servers
+      const storedServers = await Storage.loadServers();
+      for (const s of storedServers) {
+        if (!this.servers.has(s.id)) {
+          this.servers.set(s.id, {
+            id: s.id,
+            name: s.name,
+            channels: s.channels.length > 0 ? s.channels : [
+              { id: 'general', name: 'general', type: 'text', description: 'General chat' },
+              { id: 'random', name: 'random', type: 'text', description: 'Off-topic discussions' },
+            ],
+            members: [this.localPeer],
+            hostId: s.hostId,
+            createdAt: s.createdAt,
+          });
+        }
+      }
+
+      // Load all messages
+      const storedMsgs = await Storage.loadAllMessages();
+      for (const msg of storedMsgs) {
+        const key = `${msg.serverId}:${msg.channelId}`;
+        const existing = this.messages.get(key) || [];
+        if (!existing.find(m => m.id === msg.id)) {
+          existing.push(msg);
+        }
+        existing.sort((a, b) => a.seq - b.seq);
+        this.messages.set(key, existing);
+        
+        // Track max sequence number
+        if (msg.seq > this.sequenceNumber) {
+          this.sequenceNumber = msg.seq;
+        }
+      }
+
+      // Load DM conversations
+      const storedConvs = await Storage.loadDMConversations();
+      for (const c of storedConvs) {
+        if (!this.dmConversations.has(c.peerId)) {
+          const dmMsgs = await Storage.loadDMMessages(c.peerId);
+          this.dmConversations.set(c.peerId, {
+            peerId: { id: c.peerId, username: c.peerUsername, publicKey: c.peerPublicKey },
+            messages: dmMsgs,
+            lastMessage: dmMsgs[dmMsgs.length - 1],
+            unreadCount: 0,
+            isTyping: false,
+            connectionType: 'disconnected',
+            lastSeen: c.lastSeen,
+          });
+        }
+      }
+
+      this.persistenceReady = true;
+      console.log('[P2P] Loaded persisted data:', storedServers.length, 'servers,', storedMsgs.length, 'messages,', storedConvs.length, 'DM conversations');
+    } catch (err) {
+      console.error('[P2P] Error loading persisted data:', err);
+      this.persistenceReady = true;
+    }
+  }
+
+  // Save identity to storage
+  async persistIdentity(): Promise<void> {
+    this.scheduleSave('identity');
+  }
+
+  // Clear all persisted data (on logout)
+  async clearPersistedData(): Promise<void> {
+    await Storage.clearAllData();
+  }
 }
