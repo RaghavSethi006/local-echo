@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { P2PNetwork } from '@/lib/p2p-network';
 import { Server, Channel, Message, PeerId, P2PEvent, ConnectionStatus, ViewMode, DMConversation, DirectMessage } from '@/types/p2p';
+import * as Storage from '@/lib/storage';
 
 interface P2PContextType {
   network: P2PNetwork | null;
@@ -39,6 +40,10 @@ interface P2PContextType {
   sendDMTyping: (isTyping: boolean) => void;
   markDMAsRead: () => void;
   startNewDM: (peer: PeerId) => void;
+
+  // Persistence
+  hasStoredIdentity: boolean;
+  restoreSession: () => Promise<void>;
 }
 
 const P2PContext = createContext<P2PContextType | null>(null);
@@ -53,6 +58,7 @@ export function P2PProvider({ children }: { children: ReactNode }) {
   const [currentChannelId, setCurrentChannelId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [onlinePeers, setOnlinePeers] = useState<PeerId[]>([]);
+  const [hasStoredIdentity, setHasStoredIdentity] = useState(false);
   
   // View mode (servers or DMs)
   const [viewMode, setViewMode] = useState<ViewMode>('servers');
@@ -66,6 +72,15 @@ export function P2PProvider({ children }: { children: ReactNode }) {
   const currentServer = servers.find(s => s.id === currentServerId) || null;
   const currentChannel = currentServer?.channels.find(c => c.id === currentChannelId) || null;
   const currentDMPeer = dmConversations.find(c => c.peerId.id === currentDMPeerId)?.peerId || null;
+
+  // Check for stored identity on mount
+  useEffect(() => {
+    Storage.loadIdentity().then(identity => {
+      if (identity) {
+        setHasStoredIdentity(true);
+      }
+    }).catch(() => {});
+  }, []);
 
   // Handle P2P events
   const handleEvent = useCallback((event: P2PEvent) => {
@@ -135,14 +150,51 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     return () => unsubscribe();
   }, [network, handleEvent]);
 
-  const initialize = useCallback(async (username: string) => {
-    const net = new P2PNetwork(username);
+  const initializeNetwork = useCallback(async (username: string, existingId?: string) => {
+    const net = new P2PNetwork(username, existingId);
     await net.initialize();
+    
+    // Load persisted data
+    await net.loadPersistedData();
+    
+    // Save identity
+    await net.persistIdentity();
+    
     setNetwork(net);
     setLocalPeer(net.getLocalPeer());
     setIsInitialized(true);
     setConnectionStatus('disconnected');
+    setHasStoredIdentity(true);
+
+    // Restore servers and messages from persisted data
+    const restoredServers = net.getServers();
+    setServers(restoredServers);
+    
+    if (restoredServers.length > 0) {
+      const firstServer = restoredServers[0];
+      setCurrentServerId(firstServer.id);
+      const firstChannel = firstServer.channels[0]?.id || 'general';
+      setCurrentChannelId(firstChannel);
+      setMessages(net.getMessages(firstServer.id, firstChannel));
+    }
+
+    // Restore DM conversations
+    setDmConversations(net.getDMConversations());
+    setOnlinePeers(net.getOnlinePeers());
+    setAvailablePeersForDM(net.getAvailablePeersForDM());
+    
+    return net;
   }, []);
+
+  const initialize = useCallback(async (username: string) => {
+    await initializeNetwork(username);
+  }, [initializeNetwork]);
+
+  const restoreSession = useCallback(async () => {
+    const identity = await Storage.loadIdentity();
+    if (!identity) throw new Error('No stored identity');
+    await initializeNetwork(identity.username, identity.peerId);
+  }, [initializeNetwork]);
 
   const createServer = useCallback(async (name: string) => {
     if (!network) throw new Error('Network not initialized');
@@ -255,8 +307,9 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     setDmConversations(network.getDMConversations());
   }, [network, currentDMPeerId]);
 
-  const disconnect = useCallback(() => {
+  const disconnect = useCallback(async () => {
     if (network) {
+      await network.clearPersistedData();
       network.disconnect();
     }
     setNetwork(null);
@@ -272,6 +325,7 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     setCurrentDMPeerId(null);
     setDmMessages([]);
     setViewMode('servers');
+    setHasStoredIdentity(false);
   }, [network]);
 
   return (
@@ -305,6 +359,8 @@ export function P2PProvider({ children }: { children: ReactNode }) {
         sendDMTyping,
         markDMAsRead,
         startNewDM,
+        hasStoredIdentity,
+        restoreSession,
       }}
     >
       {children}
