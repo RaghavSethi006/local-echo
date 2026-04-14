@@ -451,6 +451,8 @@ export class P2PNetwork {
 
     this.sequenceNumber = Math.max(this.sequenceNumber, payload.sequenceNumber || 0);
     console.log('[P2P] Synced with host, seq:', this.sequenceNumber);
+    this.scheduleSave('servers');
+    this.scheduleSave('messages');
     
     // Emit to refresh UI
     this.emitEvent({ type: 'sync-response' as any, payload: null, timestamp: Date.now() });
