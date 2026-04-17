@@ -331,6 +331,15 @@ export class P2PNetwork {
         this.emitEvent(event);
         break;
       default:
+        // Handle history merge messages (cloudless async sync)
+        if ((event as any).type === 'history-offer') {
+          this.handleHistoryOffer(fromPeerId, event.payload);
+          return;
+        }
+        if ((event as any).type === 'history-merge') {
+          this.handleHistoryMerge(event.payload);
+          return;
+        }
         // Handle peer-list for new joiners
         if ((event as any).type === 'peer-list') {
           const peers = (event.payload as any).peers as PeerId[];
