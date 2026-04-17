@@ -210,6 +210,9 @@ export class P2PNetwork {
           timestamp: Date.now(),
         });
 
+        // Also offer our local history (cloudless async sync)
+        this.sendHistoryOffer(conn);
+
         this.emitEvent({ type: 'peer-joined', payload: hostPeer, timestamp: Date.now() });
         resolve(server);
       });
