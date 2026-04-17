@@ -210,6 +210,9 @@ export class P2PNetwork {
           timestamp: Date.now(),
         });
 
+        // Also offer our local history (cloudless async sync)
+        this.sendHistoryOffer(conn);
+
         this.emitEvent({ type: 'peer-joined', payload: hostPeer, timestamp: Date.now() });
         resolve(server);
       });
@@ -268,6 +271,9 @@ export class P2PNetwork {
       }
 
       this.emitEvent({ type: 'peer-joined', payload: peerInfo, timestamp: Date.now() });
+
+      // Always send a history offer for cloudless async sync
+      this.sendHistoryOffer(conn);
     });
   }
 
@@ -331,6 +337,15 @@ export class P2PNetwork {
         this.emitEvent(event);
         break;
       default:
+        // Handle history merge messages (cloudless async sync)
+        if ((event as any).type === 'history-offer') {
+          this.handleHistoryOffer(fromPeerId, event.payload);
+          return;
+        }
+        if ((event as any).type === 'history-merge') {
+          this.handleHistoryMerge(event.payload);
+          return;
+        }
         // Handle peer-list for new joiners
         if ((event as any).type === 'peer-list') {
           const peers = (event.payload as any).peers as PeerId[];
@@ -576,6 +591,7 @@ export class P2PNetwork {
           });
           this.setupConnectionHandlers(conn, peerId);
           this.setDMConnectionType(peerId, 'direct');
+          this.sendHistoryOffer(conn);
         });
 
         conn.on('error', () => {
@@ -683,6 +699,168 @@ export class P2PNetwork {
     if (conv) {
       conv.unreadCount = 0;
       this.dmConversations.set(peerId, conv);
+    }
+  }
+
+  // ==================== HISTORY MERGE (Cloudless Async Sync) ====================
+  // When two peers reconnect after being offline, they exchange message history
+  // for any channels/DMs they share, dedupe by message id, and rebuild a unified
+  // timeline. This lets messages propagate even when peers were never online together.
+
+  private sendHistoryOffer(conn: DataConnection): void {
+    const channelSummaries: Record<string, string[]> = {};
+    this.messages.forEach((msgs, key) => {
+      if (msgs.length > 0) channelSummaries[key] = msgs.map(m => m.id);
+    });
+
+    const dmSummaries: Record<string, string[]> = {};
+    this.dmConversations.forEach((conv, peerId) => {
+      if (conv.messages.length > 0) dmSummaries[peerId] = conv.messages.map(m => m.id);
+    });
+
+    this.sendToConnection(conn, {
+      type: 'history-offer' as any,
+      payload: { channels: channelSummaries, dms: dmSummaries, from: this.localPeer },
+      timestamp: Date.now(),
+    });
+  }
+
+  private handleHistoryOffer(fromPeerId: string, payload: any): void {
+    const toSend: { channels: Record<string, Message[]>; dms: Record<string, DirectMessage[]> } = {
+      channels: {},
+      dms: {},
+    };
+    const toRequest: { channels: Record<string, string[]>; dms: Record<string, string[]> } = {
+      channels: {},
+      dms: {},
+    };
+
+    const theirChannels: Record<string, string[]> = payload.channels || {};
+    Object.keys(theirChannels).forEach(key => {
+      const ours = this.messages.get(key) || [];
+      const theirIds = new Set(theirChannels[key]);
+      const ourIds = new Set(ours.map(m => m.id));
+      const missingForThem = ours.filter(m => !theirIds.has(m.id));
+      if (missingForThem.length > 0) toSend.channels[key] = missingForThem;
+      const missingForUs = theirChannels[key].filter(id => !ourIds.has(id));
+      if (missingForUs.length > 0) toRequest.channels[key] = missingForUs;
+    });
+
+    // Offer channels we have that they didn't list
+    this.messages.forEach((msgs, key) => {
+      if (!(key in theirChannels) && msgs.length > 0) {
+        toSend.channels[key] = msgs;
+      }
+    });
+
+    // DMs - the conversation between us is keyed by the *other* peer's id on each side
+    const theirDms: Record<string, string[]> = payload.dms || {};
+    const ourDmKey = fromPeerId;
+    const theirDmKey = this.localPeer.id;
+    const ourDm = this.dmConversations.get(ourDmKey);
+    const theirIds = new Set(theirDms[theirDmKey] || []);
+    if (ourDm && ourDm.messages.length > 0) {
+      const missingForThem = ourDm.messages.filter(m => !theirIds.has(m.id));
+      if (missingForThem.length > 0) toSend.dms[theirDmKey] = missingForThem;
+    }
+    const ourIds = new Set((ourDm?.messages || []).map(m => m.id));
+    const missingForUs = (theirDms[theirDmKey] || []).filter(id => !ourIds.has(id));
+    if (missingForUs.length > 0) toRequest.dms[ourDmKey] = missingForUs;
+
+    const conn = this.connections.get(fromPeerId)?.conn;
+    if (!conn) return;
+
+    if (
+      Object.keys(toSend.channels).length > 0 ||
+      Object.keys(toSend.dms).length > 0 ||
+      Object.keys(toRequest.channels).length > 0 ||
+      Object.keys(toRequest.dms).length > 0
+    ) {
+      console.log('[P2P History] Merge with', fromPeerId, '— sending channels:',
+        Object.keys(toSend.channels).length, 'dms:', Object.keys(toSend.dms).length);
+      this.sendToConnection(conn, {
+        type: 'history-merge' as any,
+        payload: { send: toSend, request: toRequest, from: this.localPeer },
+        timestamp: Date.now(),
+      });
+    }
+  }
+
+  private handleHistoryMerge(payload: any): void {
+    const incoming = payload.send || { channels: {}, dms: {} };
+    let added = 0;
+
+    Object.entries(incoming.channels || {}).forEach(([key, msgs]) => {
+      const existing = this.messages.get(key) || [];
+      const existingIds = new Set(existing.map(m => m.id));
+      (msgs as Message[]).forEach(m => {
+        if (!existingIds.has(m.id)) {
+          existing.push(m);
+          existingIds.add(m.id);
+          added++;
+          if (m.seq && m.seq > this.sequenceNumber) this.sequenceNumber = m.seq;
+        }
+      });
+      existing.sort((a, b) => (a.seq || a.timestamp) - (b.seq || b.timestamp));
+      this.messages.set(key, existing);
+    });
+
+    Object.entries(incoming.dms || {}).forEach(([_peerKey, msgs]) => {
+      const otherPeer: PeerId = payload.from || { id: _peerKey, username: 'Unknown' };
+      const otherPeerId = otherPeer.id;
+      const conv = this.getOrCreateDMConversation(otherPeer);
+      const existingIds = new Set(conv.messages.map(m => m.id));
+      (msgs as DirectMessage[]).forEach(m => {
+        if (!existingIds.has(m.id)) {
+          conv.messages.push(m);
+          existingIds.add(m.id);
+          added++;
+        }
+      });
+      conv.messages.sort((a, b) => a.timestamp - b.timestamp);
+      conv.lastMessage = conv.messages[conv.messages.length - 1];
+      this.dmConversations.set(otherPeerId, conv);
+    });
+
+    if (added > 0) {
+      console.log('[P2P History] Merged', added, 'new messages from peer history');
+      this.scheduleSave('messages');
+      this.scheduleSave('dms');
+      this.emitEvent({ type: 'sync-response' as any, payload: { merged: added }, timestamp: Date.now() });
+      this.emitEvent({ type: 'dm-message', payload: { merged: added }, timestamp: Date.now() });
+    }
+
+    // Honor the request portion: send back messages they asked for
+    const request = payload.request || { channels: {}, dms: {} };
+    const fromPeerId = payload.from?.id;
+    if (!fromPeerId) return;
+    const conn = this.connections.get(fromPeerId)?.conn;
+    if (!conn) return;
+
+    const replySend: { channels: Record<string, Message[]>; dms: Record<string, DirectMessage[]> } = {
+      channels: {},
+      dms: {},
+    };
+    Object.entries(request.channels || {}).forEach(([key, ids]) => {
+      const ours = this.messages.get(key) || [];
+      const wanted = new Set(ids as string[]);
+      const matches = ours.filter(m => wanted.has(m.id));
+      if (matches.length > 0) replySend.channels[key] = matches;
+    });
+    Object.entries(request.dms || {}).forEach(([_key, ids]) => {
+      const conv = this.dmConversations.get(fromPeerId);
+      if (!conv) return;
+      const wanted = new Set(ids as string[]);
+      const matches = conv.messages.filter(m => wanted.has(m.id));
+      if (matches.length > 0) replySend.dms[this.localPeer.id] = matches;
+    });
+
+    if (Object.keys(replySend.channels).length > 0 || Object.keys(replySend.dms).length > 0) {
+      this.sendToConnection(conn, {
+        type: 'history-merge' as any,
+        payload: { send: replySend, request: { channels: {}, dms: {} }, from: this.localPeer },
+        timestamp: Date.now(),
+      });
     }
   }
 
