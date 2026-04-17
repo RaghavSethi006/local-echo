@@ -268,6 +268,9 @@ export class P2PNetwork {
       }
 
       this.emitEvent({ type: 'peer-joined', payload: peerInfo, timestamp: Date.now() });
+
+      // Always send a history offer for cloudless async sync
+      this.sendHistoryOffer(conn);
     });
   }
 
