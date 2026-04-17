@@ -591,6 +591,7 @@ export class P2PNetwork {
           });
           this.setupConnectionHandlers(conn, peerId);
           this.setDMConnectionType(peerId, 'direct');
+          this.sendHistoryOffer(conn);
         });
 
         conn.on('error', () => {
