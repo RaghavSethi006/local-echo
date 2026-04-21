@@ -444,6 +444,25 @@ export class P2PNetwork {
       case 'dm-read':
         this.emitEvent(event);
         break;
+      case 'server-updated': {
+        const { serverId, patch } = event.payload || {};
+        const server = this.servers.get(serverId);
+        if (server && patch) {
+          this.applyServerPatch(server, patch);
+          this.servers.set(serverId, server);
+          this.scheduleSave('servers');
+          this.emitEvent({ type: 'server-updated', payload: { serverId }, timestamp: Date.now() });
+        }
+        break;
+      }
+      case 'server-deleted': {
+        const { serverId } = event.payload || {};
+        if (serverId) {
+          // Fire and forget — local cleanup
+          this.removeServerLocal(serverId);
+        }
+        break;
+      }
       default:
         // Handle history merge messages (cloudless async sync)
         if ((event as any).type === 'history-offer') {
