@@ -134,6 +134,28 @@ export async function deleteServer(serverId: string): Promise<void> {
   });
 }
 
+// Delete every persisted message for a single channel
+export async function deleteChannelMessages(serverId: string, channelId: string): Promise<void> {
+  const db = await openDB();
+  const tx = db.transaction('messages', 'readwrite');
+  const store = tx.objectStore('messages');
+  const idx = store.index('channel');
+  const req = idx.openCursor(IDBKeyRange.only([serverId, channelId]));
+  return new Promise((resolve, reject) => {
+    req.onsuccess = () => {
+      const cursor = req.result;
+      if (cursor) {
+        cursor.delete();
+        cursor.continue();
+      } else {
+        resolve();
+      }
+    };
+    req.onerror = () => reject(req.error);
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 // ==================== MESSAGES ====================
 
 export async function saveMessages(messages: StoredMessage[]): Promise<void> {

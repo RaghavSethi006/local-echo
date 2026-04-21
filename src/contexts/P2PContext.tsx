@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
 import { P2PNetwork } from '@/lib/p2p-network';
-import { Server, Channel, Message, PeerId, P2PEvent, ConnectionStatus, ViewMode, DMConversation, DirectMessage } from '@/types/p2p';
+import { Server, Channel, Message, PeerId, P2PEvent, ConnectionStatus, ViewMode, DMConversation, DirectMessage, ChannelOp } from '@/types/p2p';
 import * as Storage from '@/lib/storage';
 
 interface P2PContextType {
@@ -33,6 +33,12 @@ interface P2PContextType {
   sendMessage: (content: string) => void;
   generateInvite: () => Promise<string>;
   disconnect: () => void;
+
+  // Server customization (host only)
+  isCurrentServerHost: boolean;
+  updateCurrentServer: (patch: { name?: string; icon?: string; channelOps?: ChannelOp[] }) => Promise<void>;
+  leaveCurrentServer: () => Promise<void>;
+  deleteCurrentServer: () => Promise<void>;
   
   // DM Actions
   openDM: (peer: PeerId) => void;
@@ -128,6 +134,32 @@ export function P2PProvider({ children }: { children: ReactNode }) {
       case 'dm-typing':
         if (network) {
           setDmConversations(network.getDMConversations());
+        }
+        break;
+      case 'server-updated':
+        if (network) {
+          setServers(network.getServers());
+        }
+        break;
+      case 'server-deleted':
+        if (network) {
+          const remaining = network.getServers();
+          setServers(remaining);
+          // If the active server got deleted, fall back to the first available or DMs view
+          const deletedId = (event.payload as any)?.serverId;
+          if (deletedId === currentServerId) {
+            const next = remaining[0];
+            if (next) {
+              setCurrentServerId(next.id);
+              setCurrentChannelId(next.channels[0]?.id || null);
+              setMessages(network.getMessages(next.id, next.channels[0]?.id || ''));
+            } else {
+              setCurrentServerId(null);
+              setCurrentChannelId(null);
+              setMessages([]);
+              setViewMode('dms');
+            }
+          }
         }
         break;
       default:
@@ -270,6 +302,40 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     return network.generateInvite(currentServerId);
   }, [network, currentServerId]);
 
+  // ===== Server customization =====
+  const isCurrentServerHost =
+    !!network && !!currentServerId && network.isServerHost(currentServerId);
+
+  const updateCurrentServer = useCallback(
+    async (patch: { name?: string; icon?: string; channelOps?: ChannelOp[] }) => {
+      if (!network || !currentServerId) throw new Error('No server selected');
+      await network.updateServer(currentServerId, patch);
+      setServers(network.getServers());
+      // If the current channel was deleted, fall back to first remaining
+      const refreshed = network.getServer(currentServerId);
+      if (refreshed && currentChannelId && !refreshed.channels.find(c => c.id === currentChannelId)) {
+        const fallback = refreshed.channels[0]?.id || null;
+        setCurrentChannelId(fallback);
+        if (fallback) setMessages(network.getMessages(currentServerId, fallback));
+        else setMessages([]);
+      }
+    },
+    [network, currentServerId, currentChannelId]
+  );
+
+  const leaveCurrentServer = useCallback(async () => {
+    if (!network || !currentServerId) return;
+    await network.leaveServer(currentServerId);
+    // server-deleted event handler will reset selection
+    setServers(network.getServers());
+  }, [network, currentServerId]);
+
+  const deleteCurrentServer = useCallback(async () => {
+    if (!network || !currentServerId) return;
+    await network.deleteServerAsHost(currentServerId);
+    setServers(network.getServers());
+  }, [network, currentServerId]);
+
   // DM Actions
   const openDM = useCallback((peer: PeerId) => {
     if (!network) return;
@@ -376,6 +442,10 @@ export function P2PProvider({ children }: { children: ReactNode }) {
         hasStoredIdentity,
         restoreSession,
         clearSession,
+        isCurrentServerHost,
+        updateCurrentServer,
+        leaveCurrentServer,
+        deleteCurrentServer,
       }}
     >
       {children}

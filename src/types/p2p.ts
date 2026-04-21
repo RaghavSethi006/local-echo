@@ -54,6 +54,11 @@ export interface Channel {
   description?: string;
 }
 
+export type ChannelOp =
+  | { kind: 'add'; channel: Channel }
+  | { kind: 'rename'; channelId: string; name: string; description?: string }
+  | { kind: 'delete'; channelId: string };
+
 export interface Server {
   id: string;
   name: string;
@@ -96,7 +101,9 @@ export interface P2PEvent {
     | 'dm-typing'
     | 'dm-read'
     | 'dm-connection-request'
-    | 'dm-connection-response';
+    | 'dm-connection-response'
+    | 'server-updated'
+    | 'server-deleted';
   payload: any;
   seq?: number;
   timestamp: number;

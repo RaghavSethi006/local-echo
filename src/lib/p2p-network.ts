@@ -13,6 +13,7 @@ import {
   ConnectionStatus,
   DirectMessage,
   DMConversation,
+  ChannelOp,
 } from '@/types/p2p';
 import { generateId, generateKeyPair, KeyPair } from './crypto';
 import * as Storage from './storage';
@@ -124,6 +125,113 @@ export class P2PNetwork {
     console.log('[P2P] Created server:', server.name, '| Host peer ID:', this.localPeer.id);
     this.scheduleSave('servers');
     return server;
+  }
+
+  // ==================== SERVER CUSTOMIZATION (host only) ====================
+  // Updates flow: host edits locally → broadcasts `server-updated` → peers
+  // apply the same patch to their local server object → emit event for UI.
+
+  isServerHost(serverId: string): boolean {
+    const s = this.servers.get(serverId);
+    return !!s && s.hostId === this.localPeer.id;
+  }
+
+  private applyServerPatch(server: Server, patch: Partial<Server> & { _channelOps?: ChannelOp[] }): void {
+    if (typeof patch.name === 'string') server.name = patch.name;
+    if (typeof patch.icon === 'string') server.icon = patch.icon;
+    const ops = patch._channelOps || [];
+    for (const op of ops) {
+      if (op.kind === 'add') {
+        if (!server.channels.find(c => c.id === op.channel.id)) {
+          server.channels.push(op.channel);
+          this.messages.set(`${server.id}:${op.channel.id}`, []);
+        }
+      } else if (op.kind === 'rename') {
+        const ch = server.channels.find(c => c.id === op.channelId);
+        if (ch) {
+          ch.name = op.name;
+          if (typeof op.description === 'string') ch.description = op.description;
+        }
+      } else if (op.kind === 'delete') {
+        server.channels = server.channels.filter(c => c.id !== op.channelId);
+        this.messages.delete(`${server.id}:${op.channelId}`);
+      }
+    }
+  }
+
+  async updateServer(
+    serverId: string,
+    patch: { name?: string; icon?: string; channelOps?: ChannelOp[] }
+  ): Promise<Server> {
+    const server = this.servers.get(serverId);
+    if (!server) throw new Error('Server not found');
+    if (server.hostId !== this.localPeer.id) {
+      throw new Error('Only the server host can edit this server');
+    }
+
+    const fullPatch = {
+      name: patch.name,
+      icon: patch.icon,
+      _channelOps: patch.channelOps || [],
+    };
+    this.applyServerPatch(server, fullPatch);
+    this.servers.set(server.id, server);
+    this.scheduleSave('servers');
+
+    this.broadcast({
+      type: 'server-updated',
+      payload: { serverId: server.id, patch: fullPatch },
+      timestamp: Date.now(),
+    });
+    this.emitEvent({
+      type: 'server-updated',
+      payload: { serverId: server.id },
+      timestamp: Date.now(),
+    });
+    return server;
+  }
+
+  async deleteServerAsHost(serverId: string): Promise<void> {
+    const server = this.servers.get(serverId);
+    if (!server) return;
+    if (server.hostId !== this.localPeer.id) {
+      throw new Error('Only the host can delete this server');
+    }
+    this.broadcast({
+      type: 'server-deleted',
+      payload: { serverId },
+      timestamp: Date.now(),
+    });
+    await this.removeServerLocal(serverId);
+  }
+
+  async leaveServer(serverId: string): Promise<void> {
+    // Local-only removal; if we're the host, treat as delete (broadcast tear-down).
+    const server = this.servers.get(serverId);
+    if (!server) return;
+    if (server.hostId === this.localPeer.id) {
+      await this.deleteServerAsHost(serverId);
+      return;
+    }
+    await this.removeServerLocal(serverId);
+  }
+
+  private async removeServerLocal(serverId: string): Promise<void> {
+    const server = this.servers.get(serverId);
+    if (!server) return;
+    // Drop messages for all channels
+    for (const ch of server.channels) {
+      this.messages.delete(`${serverId}:${ch.id}`);
+      try { await Storage.deleteChannelMessages(serverId, ch.id); } catch {}
+    }
+    this.servers.delete(serverId);
+    try { await Storage.deleteServer(serverId); } catch {}
+    // Optionally close the host conn if we joined this server
+    this.emitEvent({
+      type: 'server-deleted',
+      payload: { serverId },
+      timestamp: Date.now(),
+    });
   }
 
   // Invite code encodes the host's PeerJS ID + server info
@@ -336,6 +444,25 @@ export class P2PNetwork {
       case 'dm-read':
         this.emitEvent(event);
         break;
+      case 'server-updated': {
+        const { serverId, patch } = event.payload || {};
+        const server = this.servers.get(serverId);
+        if (server && patch) {
+          this.applyServerPatch(server, patch);
+          this.servers.set(serverId, server);
+          this.scheduleSave('servers');
+          this.emitEvent({ type: 'server-updated', payload: { serverId }, timestamp: Date.now() });
+        }
+        break;
+      }
+      case 'server-deleted': {
+        const { serverId } = event.payload || {};
+        if (serverId) {
+          // Fire and forget — local cleanup
+          this.removeServerLocal(serverId);
+        }
+        break;
+      }
       default:
         // Handle history merge messages (cloudless async sync)
         if ((event as any).type === 'history-offer') {
