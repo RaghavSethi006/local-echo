@@ -614,8 +614,12 @@ export class P2PNetwork {
   }
 
   async sendDM(toPeerId: string, content: string): Promise<DirectMessage> {
-    const toPeer = this.findPeerById(toPeerId);
-    if (!toPeer) throw new Error('Peer not found');
+    // Fall back to the DM conversation peer (covers peers added via Peer ID
+    // who aren't yet in any server / connected list).
+    const toPeer =
+      this.findPeerById(toPeerId) ||
+      this.dmConversations.get(toPeerId)?.peerId ||
+      ({ id: toPeerId, username: `peer-${toPeerId.slice(0, 6)}` } as PeerId);
 
     const dm: DirectMessage = {
       id: generateId(),
