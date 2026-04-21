@@ -290,6 +290,13 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     openDM(peer);
   }, [openDM]);
 
+  const startDMByPeerId = useCallback(async (peerId: string, username?: string) => {
+    if (!network) throw new Error('Network not initialized');
+    if (peerId === network.getLocalPeer().id) throw new Error("That's your own peer ID");
+    const peer: PeerId = { id: peerId, username: username?.trim() || `peer-${peerId.slice(0, 6)}` };
+    openDM(peer);
+  }, [network, openDM]);
+
   const sendDM = useCallback((content: string) => {
     if (!network || !currentDMPeerId) return;
     
@@ -330,6 +337,10 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     setHasStoredIdentity(false);
   }, [network]);
 
+  const clearSession = useCallback(async () => {
+    await disconnect();
+  }, [disconnect]);
+
   return (
     <P2PContext.Provider
       value={{
@@ -361,8 +372,10 @@ export function P2PProvider({ children }: { children: ReactNode }) {
         sendDMTyping,
         markDMAsRead,
         startNewDM,
+        startDMByPeerId,
         hasStoredIdentity,
         restoreSession,
+        clearSession,
       }}
     >
       {children}
