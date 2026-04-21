@@ -1,15 +1,19 @@
 import { useState } from 'react';
 import { useP2P } from '@/contexts/P2PContext';
 import { cn } from '@/lib/utils';
-import { Hash, Volume2, ChevronDown, Copy, Users, Settings, UserPlus } from 'lucide-react';
+import { Hash, Volume2, ChevronDown, Settings, UserPlus, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { toast } from 'sonner';
+import { ServerSettingsDialog } from './ServerSettingsDialog';
+import { SearchDialog } from './SearchDialog';
 
 export function ChannelSidebar() {
-  const { currentServer, currentChannel, selectChannel, generateInvite, onlinePeers } = useP2P();
+  const { currentServer, currentChannel, selectChannel, generateInvite, onlinePeers, isCurrentServerHost, localPeer } = useP2P();
   const [textChannelsOpen, setTextChannelsOpen] = useState(true);
   const [voiceChannelsOpen, setVoiceChannelsOpen] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
 
   if (!currentServer) {
     return (
@@ -39,11 +43,29 @@ export function ChannelSidebar() {
   return (
     <aside className="w-60 max-w-[75vw] bg-card flex flex-col border-r border-border">
       {/* Server Header */}
-      <div className="h-12 px-4 flex items-center justify-between border-b border-border shadow-sm">
-        <h2 className="font-semibold text-foreground truncate">{currentServer.name}</h2>
-        <button className="text-muted-foreground hover:text-foreground transition-colors">
-          <ChevronDown className="w-4 h-4" />
-        </button>
+      <div className="h-12 px-3 flex items-center justify-between gap-2 border-b border-border shadow-sm">
+        <div className="flex items-center gap-2 min-w-0">
+          {currentServer.icon && (
+            <span className="text-base leading-none">{currentServer.icon}</span>
+          )}
+          <h2 className="font-semibold text-foreground truncate text-sm">{currentServer.name}</h2>
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setSearchOpen(true)}
+            className="p-1 text-muted-foreground hover:text-foreground transition-colors"
+            aria-label="Search messages"
+          >
+            <Search className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => setSettingsOpen(true)}
+            className="p-1 text-muted-foreground hover:text-foreground transition-colors"
+            aria-label="Server settings"
+          >
+            <Settings className="w-4 h-4" />
+          </button>
+        </div>
       </div>
 
       {/* Invite Button */}
@@ -123,20 +145,22 @@ export function ChannelSidebar() {
       <div className="h-14 px-2 flex items-center gap-2 bg-sidebar border-t border-border">
         <div className="relative">
           <div className="w-8 h-8 rounded-full bg-primary flex items-center justify-center text-xs font-semibold text-primary-foreground">
-            {onlinePeers[0]?.username?.charAt(0).toUpperCase() || '?'}
+            {localPeer?.username?.charAt(0).toUpperCase() || '?'}
           </div>
           <div className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-status-online border-2 border-sidebar" />
         </div>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-foreground truncate">
-            {onlinePeers[0]?.username || 'Anonymous'}
+            {localPeer?.username || 'Anonymous'}
           </p>
-          <p className="text-xs text-muted-foreground">Online</p>
+          <p className="text-xs text-muted-foreground">
+            {isCurrentServerHost ? 'Hosting' : 'Online'}
+          </p>
         </div>
-        <button className="p-1 text-muted-foreground hover:text-foreground transition-colors">
-          <Settings className="w-4 h-4" />
-        </button>
       </div>
+
+      <ServerSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <SearchDialog open={searchOpen} onOpenChange={setSearchOpen} />
     </aside>
   );
 }
