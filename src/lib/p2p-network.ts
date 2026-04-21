@@ -13,6 +13,7 @@ import {
   ConnectionStatus,
   DirectMessage,
   DMConversation,
+  ChannelOp,
 } from '@/types/p2p';
 import { generateId, generateKeyPair, KeyPair } from './crypto';
 import * as Storage from './storage';
