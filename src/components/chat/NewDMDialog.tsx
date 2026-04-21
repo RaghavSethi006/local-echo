@@ -8,9 +8,11 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { Search, MessageCircle, Users } from 'lucide-react';
+import { Search, MessageCircle, Users, KeyRound, Send } from 'lucide-react';
 import { PeerId } from '@/types/p2p';
+import { toast } from 'sonner';
 
 interface NewDMDialogProps {
   open: boolean;
@@ -18,8 +20,11 @@ interface NewDMDialogProps {
 }
 
 export function NewDMDialog({ open, onOpenChange }: NewDMDialogProps) {
-  const { availablePeersForDM, startNewDM, onlinePeers, localPeer } = useP2P();
+  const { availablePeersForDM, startNewDM, startDMByPeerId, onlinePeers } = useP2P();
   const [searchQuery, setSearchQuery] = useState('');
+  const [peerIdInput, setPeerIdInput] = useState('');
+  const [usernameInput, setUsernameInput] = useState('');
+  const [mode, setMode] = useState<'list' | 'peerId'>('list');
 
   const filteredPeers = availablePeersForDM.filter(peer =>
     peer.username.toLowerCase().includes(searchQuery.toLowerCase())
@@ -31,6 +36,23 @@ export function NewDMDialog({ open, onOpenChange }: NewDMDialogProps) {
     startNewDM(peer);
     setSearchQuery('');
     onOpenChange(false);
+  };
+
+  const handleStartByPeerId = async () => {
+    const id = peerIdInput.trim();
+    if (!id) {
+      toast.error('Please enter a peer ID');
+      return;
+    }
+    try {
+      await startDMByPeerId(id, usernameInput.trim() || undefined);
+      setPeerIdInput('');
+      setUsernameInput('');
+      setMode('list');
+      onOpenChange(false);
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to start DM');
+    }
   };
 
   // Generate consistent color based on username
@@ -57,10 +79,66 @@ export function NewDMDialog({ open, onOpenChange }: NewDMDialogProps) {
             New Direct Message
           </DialogTitle>
           <DialogDescription>
-            Select a peer to start a private conversation.
+            Pick a peer from your network or DM by Peer ID.
           </DialogDescription>
         </DialogHeader>
 
+        {/* Tabs */}
+        <div className="flex gap-1 p-1 bg-secondary/50 rounded-md">
+          <button
+            onClick={() => setMode('list')}
+            className={cn(
+              'flex-1 px-3 py-1.5 text-xs font-medium rounded transition-colors',
+              mode === 'list'
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+            )}
+          >
+            <Users className="w-3.5 h-3.5 inline mr-1" /> Known peers
+          </button>
+          <button
+            onClick={() => setMode('peerId')}
+            className={cn(
+              'flex-1 px-3 py-1.5 text-xs font-medium rounded transition-colors',
+              mode === 'peerId'
+                ? 'bg-background text-foreground shadow-sm'
+                : 'text-muted-foreground hover:text-foreground'
+            )}
+          >
+            <KeyRound className="w-3.5 h-3.5 inline mr-1" /> By Peer ID
+          </button>
+        </div>
+
+        {mode === 'peerId' ? (
+          <div className="space-y-3">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-foreground">Peer ID</label>
+              <Input
+                value={peerIdInput}
+                onChange={(e) => setPeerIdInput(e.target.value)}
+                placeholder="Paste peer ID..."
+                className="font-mono text-xs"
+                onKeyDown={(e) => e.key === 'Enter' && handleStartByPeerId()}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-foreground">Display name (optional)</label>
+              <Input
+                value={usernameInput}
+                onChange={(e) => setUsernameInput(e.target.value)}
+                placeholder="What to call them"
+                onKeyDown={(e) => e.key === 'Enter' && handleStartByPeerId()}
+              />
+            </div>
+            <Button onClick={handleStartByPeerId} className="w-full">
+              <Send className="w-4 h-4 mr-2" /> Start Conversation
+            </Button>
+            <p className="text-xs text-muted-foreground">
+              Your contact can find their Peer ID under Settings. The DM will connect directly when they come online.
+            </p>
+          </div>
+        ) : (
+        <>
         {/* Search */}
         <div className="relative">
           <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -81,7 +159,7 @@ export function NewDMDialog({ open, onOpenChange }: NewDMDialogProps) {
                 {searchQuery ? 'No peers found' : 'No peers available'}
               </p>
               <p className="text-xs text-muted-foreground/70 mt-1">
-                Join a server to discover peers
+                Join a server to discover peers, or switch to "By Peer ID"
               </p>
             </div>
           ) : (
@@ -123,6 +201,8 @@ export function NewDMDialog({ open, onOpenChange }: NewDMDialogProps) {
             ))
           )}
         </div>
+        </>
+        )}
 
         {/* Info */}
         <div className="p-3 rounded-lg bg-secondary/50 border border-border">

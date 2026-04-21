@@ -49,7 +49,7 @@ export function MembersSidebar() {
   };
 
   return (
-    <aside className="w-60 bg-card border-l border-border overflow-y-auto">
+    <aside className="w-60 max-w-[80vw] h-full bg-card border-l border-border overflow-y-auto">
       <div className="p-4 space-y-6">
         {/* Online Members */}
         {onlineMembers.length > 0 && (
