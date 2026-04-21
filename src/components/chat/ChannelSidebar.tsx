@@ -13,7 +13,7 @@ export function ChannelSidebar() {
 
   if (!currentServer) {
     return (
-      <aside className="w-60 bg-card flex flex-col border-r border-border">
+      <aside className="w-60 max-w-[75vw] bg-card flex flex-col border-r border-border">
         <div className="p-4 flex items-center justify-center h-full">
           <p className="text-muted-foreground text-sm text-center">
             Select or create a server to get started
@@ -37,7 +37,7 @@ export function ChannelSidebar() {
   };
 
   return (
-    <aside className="w-60 bg-card flex flex-col border-r border-border">
+    <aside className="w-60 max-w-[75vw] bg-card flex flex-col border-r border-border">
       {/* Server Header */}
       <div className="h-12 px-4 flex items-center justify-between border-b border-border shadow-sm">
         <h2 className="font-semibold text-foreground truncate">{currentServer.name}</h2>

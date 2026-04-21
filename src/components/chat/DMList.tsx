@@ -57,7 +57,7 @@ export function DMList() {
   };
 
   return (
-    <aside className="w-60 bg-card flex flex-col border-r border-border">
+    <aside className="w-60 max-w-[75vw] bg-card flex flex-col border-r border-border">
       {/* Header */}
       <div className="h-12 px-4 flex items-center justify-between border-b border-border shadow-sm">
         <h2 className="font-semibold text-foreground">Direct Messages</h2>
