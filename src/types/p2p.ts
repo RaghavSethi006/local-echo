@@ -96,7 +96,9 @@ export interface P2PEvent {
     | 'dm-typing'
     | 'dm-read'
     | 'dm-connection-request'
-    | 'dm-connection-response';
+    | 'dm-connection-response'
+    | 'server-updated'
+    | 'server-deleted';
   payload: any;
   seq?: number;
   timestamp: number;
