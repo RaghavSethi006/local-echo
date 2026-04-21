@@ -40,10 +40,12 @@ interface P2PContextType {
   sendDMTyping: (isTyping: boolean) => void;
   markDMAsRead: () => void;
   startNewDM: (peer: PeerId) => void;
+  startDMByPeerId: (peerId: string, username?: string) => Promise<void>;
 
   // Persistence
   hasStoredIdentity: boolean;
   restoreSession: () => Promise<void>;
+  clearSession: () => Promise<void>;
 }
 
 const P2PContext = createContext<P2PContextType | null>(null);
@@ -88,13 +90,11 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     
     switch (event.type) {
       case 'message':
-        if (currentServerId && currentChannelId) {
+        if (network && currentServerId && currentChannelId) {
           const msg = event.payload as Message;
+          // Always re-fetch from network to guarantee fresh state
           if (msg.serverId === currentServerId && msg.channelId === currentChannelId) {
-            setMessages(prev => {
-              if (prev.find(m => m.id === msg.id)) return prev;
-              return [...prev, msg].sort((a, b) => a.seq - b.seq);
-            });
+            setMessages(network.getMessages(currentServerId, currentChannelId));
           }
         }
         break;
@@ -108,11 +108,13 @@ export function P2PProvider({ children }: { children: ReactNode }) {
       case 'peer-left':
         if (network) {
           setOnlinePeers(network.getOnlinePeers());
+          setServers(network.getServers());
         }
         break;
       case 'host-changed':
         if (network) {
           setConnectionStatus(network.getConnectionStatus());
+          setServers(network.getServers());
         }
         break;
       case 'dm-message':
