@@ -302,6 +302,40 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     return network.generateInvite(currentServerId);
   }, [network, currentServerId]);
 
+  // ===== Server customization =====
+  const isCurrentServerHost =
+    !!network && !!currentServerId && network.isServerHost(currentServerId);
+
+  const updateCurrentServer = useCallback(
+    async (patch: { name?: string; icon?: string; channelOps?: ChannelOp[] }) => {
+      if (!network || !currentServerId) throw new Error('No server selected');
+      await network.updateServer(currentServerId, patch);
+      setServers(network.getServers());
+      // If the current channel was deleted, fall back to first remaining
+      const refreshed = network.getServer(currentServerId);
+      if (refreshed && currentChannelId && !refreshed.channels.find(c => c.id === currentChannelId)) {
+        const fallback = refreshed.channels[0]?.id || null;
+        setCurrentChannelId(fallback);
+        if (fallback) setMessages(network.getMessages(currentServerId, fallback));
+        else setMessages([]);
+      }
+    },
+    [network, currentServerId, currentChannelId]
+  );
+
+  const leaveCurrentServer = useCallback(async () => {
+    if (!network || !currentServerId) return;
+    await network.leaveServer(currentServerId);
+    // server-deleted event handler will reset selection
+    setServers(network.getServers());
+  }, [network, currentServerId]);
+
+  const deleteCurrentServer = useCallback(async () => {
+    if (!network || !currentServerId) return;
+    await network.deleteServerAsHost(currentServerId);
+    setServers(network.getServers());
+  }, [network, currentServerId]);
+
   // DM Actions
   const openDM = useCallback((peer: PeerId) => {
     if (!network) return;
@@ -408,6 +442,10 @@ export function P2PProvider({ children }: { children: ReactNode }) {
         hasStoredIdentity,
         restoreSession,
         clearSession,
+        isCurrentServerHost,
+        updateCurrentServer,
+        leaveCurrentServer,
+        deleteCurrentServer,
       }}
     >
       {children}
