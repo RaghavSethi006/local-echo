@@ -5,11 +5,13 @@ import { Plus, Hash, Settings, Wifi, WifiOff, MessageCircle, Users } from 'lucid
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { CreateServerDialog } from './CreateServerDialog';
 import { JoinServerDialog } from './JoinServerDialog';
+import { SettingsDialog } from './SettingsDialog';
 
 export function ServerSidebar() {
   const { servers, currentServer, selectServer, connectionStatus, viewMode, setViewMode, dmConversations } = useP2P();
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showJoinDialog, setShowJoinDialog] = useState(false);
+  const [showSettingsDialog, setShowSettingsDialog] = useState(false);
 
   const getStatusColor = () => {
     switch (connectionStatus) {
@@ -151,6 +153,7 @@ export function ServerSidebar() {
       <Tooltip>
         <TooltipTrigger asChild>
           <button
+            onClick={() => setShowSettingsDialog(true)}
             className={cn(
               "w-12 h-12 rounded-2xl flex items-center justify-center",
               "bg-secondary text-muted-foreground transition-all duration-200",
@@ -167,6 +170,7 @@ export function ServerSidebar() {
 
       <CreateServerDialog open={showCreateDialog} onOpenChange={setShowCreateDialog} />
       <JoinServerDialog open={showJoinDialog} onOpenChange={setShowJoinDialog} />
+      <SettingsDialog open={showSettingsDialog} onOpenChange={setShowSettingsDialog} />
     </aside>
   );
 }
