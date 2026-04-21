@@ -8,9 +8,11 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { Search, MessageCircle, Users } from 'lucide-react';
+import { Search, MessageCircle, Users, KeyRound, Send } from 'lucide-react';
 import { PeerId } from '@/types/p2p';
+import { toast } from 'sonner';
 
 interface NewDMDialogProps {
   open: boolean;
@@ -18,8 +20,11 @@ interface NewDMDialogProps {
 }
 
 export function NewDMDialog({ open, onOpenChange }: NewDMDialogProps) {
-  const { availablePeersForDM, startNewDM, onlinePeers, localPeer } = useP2P();
+  const { availablePeersForDM, startNewDM, startDMByPeerId, onlinePeers } = useP2P();
   const [searchQuery, setSearchQuery] = useState('');
+  const [peerIdInput, setPeerIdInput] = useState('');
+  const [usernameInput, setUsernameInput] = useState('');
+  const [mode, setMode] = useState<'list' | 'peerId'>('list');
 
   const filteredPeers = availablePeersForDM.filter(peer =>
     peer.username.toLowerCase().includes(searchQuery.toLowerCase())
