@@ -1,8 +1,7 @@
 import { useRef, useEffect, useState } from 'react';
 import { useP2P } from '@/contexts/P2PContext';
 import { cn } from '@/lib/utils';
-import { MessageCircle, Phone, Video, Pin, MoreVertical, Wifi, Radio, Lock, Send, Plus, Smile } from 'lucide-react';
-import { DirectMessage } from '@/types/p2p';
+import { MessageCircle, Wifi, Radio, Lock, Send } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
@@ -133,9 +132,9 @@ export function DMConversation() {
   }
 
   return (
-    <main className="flex-1 flex flex-col bg-background">
-      {/* Header */}
-      <header className="h-12 px-4 flex items-center justify-between border-b border-border shrink-0">
+    <main className="flex-1 flex flex-col bg-background min-w-0">
+      {/* Header — desktop only */}
+      <header className="hidden md:flex h-12 px-4 items-center justify-between border-b border-border shrink-0">
         <div className="flex items-center gap-3">
           <div className="relative">
             <div className={cn(
@@ -169,18 +168,6 @@ export function DMConversation() {
                 : 'End-to-end encrypted'}
             </TooltipContent>
           </Tooltip>
-          <button className="p-2 text-muted-foreground hover:text-foreground transition-colors">
-            <Phone className="w-5 h-5" />
-          </button>
-          <button className="p-2 text-muted-foreground hover:text-foreground transition-colors">
-            <Video className="w-5 h-5" />
-          </button>
-          <button className="p-2 text-muted-foreground hover:text-foreground transition-colors">
-            <Pin className="w-5 h-5" />
-          </button>
-          <button className="p-2 text-muted-foreground hover:text-foreground transition-colors">
-            <MoreVertical className="w-5 h-5" />
-          </button>
         </div>
       </header>
 
@@ -268,15 +255,8 @@ export function DMConversation() {
       </div>
 
       {/* Message Input */}
-      <form onSubmit={handleSubmit} className="px-4 pb-6 pt-2">
+      <form onSubmit={handleSubmit} className="px-3 sm:px-4 pb-4 pt-2">
         <div className="relative flex items-end bg-secondary rounded-lg">
-          <button
-            type="button"
-            className="p-3 text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <Plus className="w-5 h-5" />
-          </button>
-
           <textarea
             ref={inputRef}
             value={content}
@@ -285,27 +265,25 @@ export function DMConversation() {
             placeholder={`Message @${currentDMPeer.username}`}
             rows={1}
             className={cn(
-              "flex-1 bg-transparent py-3 text-foreground placeholder:text-muted-foreground",
+              "flex-1 bg-transparent py-3 px-4 text-foreground placeholder:text-muted-foreground",
               "resize-none focus:outline-none text-sm leading-relaxed",
               "min-h-[44px] max-h-[200px]"
             )}
           />
 
-          <div className="flex items-center pr-2 pb-2 gap-1">
-            <button
-              type="button"
-              className="p-2 text-muted-foreground hover:text-foreground transition-colors"
-            >
-              <Smile className="w-5 h-5" />
-            </button>
-            {content.trim() && (
-              <button
-                type="submit"
-                className="p-2 text-primary hover:text-primary/80 transition-colors"
-              >
-                <Send className="w-5 h-5" />
-              </button>
-            )}
+          <button
+            type="submit"
+            disabled={!content.trim()}
+            className="p-3 text-primary hover:text-primary/80 disabled:text-muted-foreground/40 disabled:cursor-not-allowed transition-colors"
+          >
+            <Send className="w-5 h-5" />
+          </button>
+        </div>
+        {/* Connection badge on mobile */}
+        <div className="md:hidden flex items-center justify-center mt-2">
+          <div className={cn("inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-secondary/50", connInfo.color)}>
+            <connInfo.icon className="w-3 h-3" />
+            <span className="text-[10px]">{connInfo.label}</span>
           </div>
         </div>
       </form>
