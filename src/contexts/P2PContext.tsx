@@ -43,7 +43,7 @@ interface P2PContextType {
   
   // DM Actions
   openDM: (peer: PeerId) => void;
-  sendDM: (content: string) => void;
+  sendDM: (content: string) => Promise<void>;
   sendDMTyping: (isTyping: boolean) => void;
   markDMAsRead: () => void;
   startNewDM: (peer: PeerId) => void;
@@ -153,12 +153,15 @@ export function P2PProvider({ children }: { children: ReactNode }) {
         break;
       case 'dm-message':
         if (net) {
+          const payload = event.payload as { dm?: DirectMessage; incoming?: boolean } | { peerId?: string; connectionType?: string } | { merged?: number } | DirectMessage;
+          const dm = (payload as { dm?: DirectMessage }).dm || (payload as DirectMessage);
+          const incoming = Boolean((payload as { incoming?: boolean }).incoming);
+
           setDmConversations(net.getDMConversations());
           if (dmPeerId) {
             setDmMessages(net.getDMMessages(dmPeerId));
           }
-          const dm = event.payload as DirectMessage;
-          if (dm && dm.from && dm.content && dm.from.id !== net.getLocalPeer().id) {
+          if (incoming && dm?.from && dm.content && dm.from.id !== net.getLocalPeer().id) {
             sendBrowserNotification(
               `New message from ${dm.from.username}`,
               dm.content.length > 60 ? `${dm.content.slice(0, 60)}…` : dm.content
@@ -400,10 +403,10 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     openDM(peer);
   }, [network, openDM]);
 
-  const sendDM = useCallback((content: string) => {
+  const sendDM = useCallback(async (content: string) => {
     if (!network || !currentDMPeerId) return;
     
-    network.sendDM(currentDMPeerId, content);
+    await network.sendDM(currentDMPeerId, content);
     setDmMessages(network.getDMMessages(currentDMPeerId));
     setDmConversations(network.getDMConversations());
   }, [network, currentDMPeerId]);

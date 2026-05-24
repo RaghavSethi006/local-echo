@@ -794,7 +794,7 @@ export class P2PNetwork {
       this.dmConversations.get(toPeerId)?.peerId ||
       ({ id: toPeerId, username: `peer-${toPeerId.slice(0, 6)}` } as PeerId);
 
-    const dm: DirectMessage = {
+    const localDm: DirectMessage = {
       id: generateId(),
       type: 'DM',
       from: this.localPeer,
@@ -804,37 +804,41 @@ export class P2PNetwork {
       encrypted: false,
     };
 
+    let wireDm: DirectMessage = { ...localDm };
     const toPeerPublicKey = toPeer.publicKey;
     if (toPeerPublicKey && this.keyPair) {
       const sharedKey = await this.getOrDeriveSharedKey(toPeerId, toPeerPublicKey);
       if (sharedKey) {
-        dm.content = await encrypt(dm.content, sharedKey);
-        dm.encrypted = true;
+        wireDm = {
+          ...localDm,
+          content: await encrypt(localDm.content, sharedKey),
+          encrypted: true,
+        };
       }
     }
 
     // Store locally
     const conv = this.getOrCreateDMConversation(toPeer);
-    conv.messages.push(dm);
-    conv.lastMessage = dm;
+    conv.messages.push(localDm);
+    conv.lastMessage = localDm;
     this.dmConversations.set(toPeerId, conv);
     this.scheduleSave('dms');
 
     // Send - try direct connection first, then relay through host
     const entry = this.connections.get(toPeerId);
     if (entry?.conn?.open) {
-      this.sendToConnection(entry.conn, { type: 'dm-message', payload: dm, timestamp: Date.now() });
+      this.sendToConnection(entry.conn, { type: 'dm-message', payload: wireDm, timestamp: Date.now() });
     } else if (this.hostConn?.open) {
       // Relay through host (host treats as opaque)
       this.sendToConnection(this.hostConn, {
         type: 'dm-message',
-        payload: { ...dm, _relayTo: toPeerId },
+        payload: { ...wireDm, _relayTo: toPeerId },
         timestamp: Date.now(),
       });
     }
 
-    this.emitEvent({ type: 'dm-message', payload: dm, timestamp: Date.now() });
-    return dm;
+    this.emitEvent({ type: 'dm-message', payload: { dm: localDm, incoming: false }, timestamp: Date.now() });
+    return localDm;
   }
 
   private async handleDMMessage(dm: DirectMessage, fromPeerId: string): Promise<void> {
@@ -867,7 +871,7 @@ export class P2PNetwork {
       conv.unreadCount++;
       this.dmConversations.set(dm.from.id, conv);
       this.scheduleSave('dms');
-      this.emitEvent({ type: 'dm-message', payload: dm, timestamp: Date.now() });
+      this.emitEvent({ type: 'dm-message', payload: { dm, incoming: true }, timestamp: Date.now() });
     }
   }
 
@@ -1190,6 +1194,7 @@ export class P2PNetwork {
           promises.push(Storage.saveServer({
             id: server.id,
             name: server.name,
+            icon: server.icon,
             channels: server.channels,
             hostId: server.hostId,
             createdAt: server.createdAt,
@@ -1243,7 +1248,7 @@ export class P2PNetwork {
             hostId: s.hostId,
             createdAt: s.createdAt,
             inviteCode: s.inviteCode,
-            icon: (s as Server).icon,
+            icon: s.icon,
           });
         }
       }

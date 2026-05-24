@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils';
 import { MessageCircle, Wifi, Radio, Lock, Send } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { toast } from 'sonner';
 
 export function DMConversation() {
   const { currentDMPeer, dmMessages, localPeer, sendDM, sendDMTyping, markDMAsRead, dmConversations } = useP2P();
@@ -28,14 +29,19 @@ export function DMConversation() {
     }
   }, [currentDMPeer, markDMAsRead]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!content.trim()) return;
-    
-    sendDM(content.trim());
-    setContent('');
-    sendDMTyping(false);
-    inputRef.current?.focus();
+
+    try {
+      await sendDM(content.trim());
+      setContent('');
+    } catch (error: any) {
+      toast.error(error?.message || 'Failed to send DM');
+    } finally {
+      sendDMTyping(false);
+      inputRef.current?.focus();
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {

@@ -16,6 +16,7 @@ export interface StoredIdentity {
 export interface StoredServer {
   id: string;
   name: string;
+  icon?: string;
   channels: Channel[];
   hostId: string;
   createdAt: number;
