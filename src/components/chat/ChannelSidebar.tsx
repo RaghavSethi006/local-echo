@@ -124,17 +124,18 @@ export function ChannelSidebar() {
             </CollapsibleTrigger>
             <CollapsibleContent className="space-y-0.5 mt-1">
               {voiceChannels.map((channel) => (
-                <button
+                <div
                   key={channel.id}
                   className={cn(
-                    "w-full flex items-center gap-2 px-2 py-1.5 rounded-md",
-                    "text-muted-foreground transition-colors",
-                    "hover:bg-channel-hover hover:text-secondary-foreground"
+                    "group flex items-center gap-2 px-2 py-1.5 rounded-md",
+                    "cursor-not-allowed opacity-50 text-muted-foreground"
                   )}
+                  title="Voice channels are coming soon"
                 >
                   <Volume2 className="w-4 h-4 flex-shrink-0" />
                   <span className="truncate text-sm">{channel.name}</span>
-                </button>
+                  <span className="ml-auto text-xs bg-muted text-muted-foreground px-1 rounded">soon</span>
+                </div>
               ))}
             </CollapsibleContent>
           </Collapsible>

@@ -17,7 +17,7 @@ interface SettingsDialogProps {
 }
 
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
-  const { localPeer, connectionStatus, clearSession } = useP2P();
+  const { localPeer, connectionStatus, disconnect } = useP2P();
   const [confirmingLogout, setConfirmingLogout] = useState(false);
 
   const copyPeerId = async () => {
@@ -31,7 +31,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
       setConfirmingLogout(true);
       return;
     }
-    await clearSession();
+    await disconnect();
     onOpenChange(false);
     toast.success('Signed out. Local data cleared.');
   };

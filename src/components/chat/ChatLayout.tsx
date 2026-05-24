@@ -7,6 +7,7 @@ import { DMList } from './DMList';
 import { DMConversation } from './DMConversation';
 import { useP2P } from '@/contexts/P2PContext';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useNotificationPermission } from '@/hooks/use-notifications';
 import { cn } from '@/lib/utils';
 import { Menu, Users, X } from 'lucide-react';
 
@@ -15,6 +16,7 @@ export function ChatLayout() {
   const isMobile = useIsMobile();
   const [navOpen, setNavOpen] = useState(false);
   const [membersOpen, setMembersOpen] = useState(false);
+  useNotificationPermission();
 
   // Auto-close drawers when a channel/DM is selected (mobile)
   useEffect(() => {

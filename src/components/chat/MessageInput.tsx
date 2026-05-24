@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useP2P } from '@/contexts/P2PContext';
 import { cn } from '@/lib/utils';
 import { Send } from 'lucide-react';
+import { toast } from 'sonner';
 
 export function MessageInput() {
   const { currentChannel, sendMessage } = useP2P();
@@ -11,10 +12,14 @@ export function MessageInput() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!content.trim()) return;
-    
-    sendMessage(content.trim());
-    setContent('');
-    inputRef.current?.focus();
+
+    try {
+      sendMessage(content.trim());
+      setContent('');
+      inputRef.current?.focus();
+    } catch (err: any) {
+      toast.error(err.message || 'Failed to send message');
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -35,6 +40,11 @@ export function MessageInput() {
   return (
     <form onSubmit={handleSubmit} className="px-3 sm:px-4 pb-4 pt-2">
       <div className="relative flex items-end bg-secondary rounded-lg">
+        {content.length > 1500 && (
+          <span className="text-xs text-warning absolute bottom-2 right-16">
+            {content.length}/~2000
+          </span>
+        )}
         {/* Input */}
         <textarea
           ref={inputRef}
