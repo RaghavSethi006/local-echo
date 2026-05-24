@@ -4,6 +4,7 @@ export interface PeerId {
   id: string;
   username: string;
   publicKey?: string;
+  verifyKey?: string;
 }
 
 export interface Message {
@@ -27,6 +28,7 @@ export interface DirectMessage {
   timestamp: number;
   encrypted?: boolean;
   read?: boolean;
+  _relayTo?: string;
 }
 
 export interface DMConversation {
@@ -67,6 +69,7 @@ export interface Server {
   members: PeerId[];
   hostId: string;
   createdAt: number;
+  inviteCode?: string;
 }
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'host';
@@ -103,7 +106,10 @@ export interface P2PEvent {
     | 'dm-connection-request'
     | 'dm-connection-response'
     | 'server-updated'
-    | 'server-deleted';
+    | 'server-deleted'
+    | 'history-offer'
+    | 'history-merge'
+    | 'peer-list';
   payload: any;
   seq?: number;
   timestamp: number;

@@ -1,46 +1,52 @@
 // IndexedDB persistence layer for cloudless P2P chat
 // All data stays local — no cloud, no telemetry
 
+import type { Channel, DirectMessage, PeerId } from '@/types/p2p';
+
 const DB_NAME = 'p2p-chat-store';
 const DB_VERSION = 1;
 
-interface StoredIdentity {
+export interface StoredIdentity {
   peerId: string;
   username: string;
   publicKey?: string;
   privateKey?: string; // Stored as JWK
 }
 
-interface StoredServer {
+export interface StoredServer {
   id: string;
   name: string;
-  channels: any[];
+  channels: Channel[];
   hostId: string;
   createdAt: number;
   inviteCode?: string; // Store invite code for auto-rejoin
   lastHostPeerId?: string; // Last known host PeerJS ID
 }
 
-interface StoredMessage {
+export interface StoredMessage {
   id: string;
   serverId: string;
   channelId: string;
-  author: any;
+  author: PeerId;
   content: string;
   seq: number;
   timestamp: number;
+  encrypted?: boolean;
 }
 
-interface StoredDMConversation {
+export interface StoredDMConversation {
   peerId: string;
   peerUsername: string;
   peerPublicKey?: string;
-  messages: any[];
+  messages: DirectMessage[];
   lastSeen: number;
 }
 
+let dbPromise: Promise<IDBDatabase> | null = null;
+
 function openDB(): Promise<IDBDatabase> {
-  return new Promise((resolve, reject) => {
+  if (dbPromise) return dbPromise;
+  dbPromise = new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
 
     request.onupgradeneeded = (event) => {
@@ -73,10 +79,13 @@ function openDB(): Promise<IDBDatabase> {
         dmStore.createIndex('peerId', 'peerId', { unique: false });
       }
     };
-
     request.onsuccess = () => resolve(request.result);
-    request.onerror = () => reject(request.error);
+    request.onerror = () => {
+      dbPromise = null;
+      reject(request.error);
+    };
   });
+  return dbPromise;
 }
 
 // ==================== IDENTITY ====================
@@ -179,7 +188,10 @@ export async function loadMessages(serverId: string, channelId: string): Promise
   return new Promise((resolve, reject) => {
     request.onsuccess = () => {
       const msgs = request.result as StoredMessage[];
-      msgs.sort((a, b) => a.seq - b.seq);
+      msgs.sort((a, b) => {
+        if (a.seq && b.seq) return a.seq - b.seq;
+        return a.timestamp - b.timestamp;
+      });
       resolve(msgs);
     };
     request.onerror = () => reject(request.error);
@@ -220,16 +232,15 @@ export async function loadDMConversations(): Promise<StoredDMConversation[]> {
 
 // ==================== DM MESSAGES ====================
 
-export async function saveDMMessages(messages: any[]): Promise<void> {
+export async function saveDMMessages(messages: DirectMessage[], localPeerId: string): Promise<void> {
   if (messages.length === 0) return;
   const db = await openDB();
   const tx = db.transaction('dmMessages', 'readwrite');
   const store = tx.objectStore('dmMessages');
   messages.forEach(msg => {
     // Store with conversationPeerId — the OTHER person's ID
-    const localId = msg._localPeerId; // set by caller
-    const otherPeerId = msg.from?.id === localId ? msg.to?.id : msg.from?.id;
-    const stored = { ...msg, peerId: otherPeerId || msg.from?.id || msg.to?.id };
+    const otherPeerId = msg.from.id === localPeerId ? msg.to.id : msg.from.id;
+    const stored = { ...msg, peerId: otherPeerId };
     store.put(stored);
   });
   return new Promise((resolve, reject) => {
@@ -238,27 +249,27 @@ export async function saveDMMessages(messages: any[]): Promise<void> {
   });
 }
 
-export async function loadDMMessages(peerId: string): Promise<any[]> {
+export async function loadDMMessages(peerId: string): Promise<DirectMessage[]> {
   const db = await openDB();
   const tx = db.transaction('dmMessages', 'readonly');
   const index = tx.objectStore('dmMessages').index('peerId');
   const request = index.getAll(peerId);
   return new Promise((resolve, reject) => {
     request.onsuccess = () => {
-      const msgs = request.result;
-      msgs.sort((a: any, b: any) => a.timestamp - b.timestamp);
+      const msgs = request.result as DirectMessage[];
+      msgs.sort((a, b) => a.timestamp - b.timestamp);
       resolve(msgs);
     };
     request.onerror = () => reject(request.error);
   });
 }
 
-export async function loadAllDMMessages(): Promise<any[]> {
+export async function loadAllDMMessages(): Promise<DirectMessage[]> {
   const db = await openDB();
   const tx = db.transaction('dmMessages', 'readonly');
   const request = tx.objectStore('dmMessages').getAll();
   return new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => resolve(request.result as DirectMessage[]);
     request.onerror = () => reject(request.error);
   });
 }

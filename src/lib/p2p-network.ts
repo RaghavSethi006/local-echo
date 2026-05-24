@@ -15,7 +15,7 @@ import {
   DMConversation,
   ChannelOp,
 } from '@/types/p2p';
-import { generateId, generateKeyPair, KeyPair } from './crypto';
+import { generateId, generateKeyPair, generateSigningKeyPair, deriveSharedKey, encrypt, decrypt, importPublicKey, signData, verifySignature, KeyPair } from './crypto';
 import * as Storage from './storage';
 
 type EventCallback = (event: P2PEvent) => void;
@@ -30,6 +30,8 @@ interface PeerEntry {
 export class P2PNetwork {
   private localPeer: PeerId;
   private keyPair: KeyPair | null = null;
+  private signingKeyPair: { signingKey: CryptoKey; verifyKey: CryptoKey; verifyKeyString: string } | null = null;
+  private sharedKeys: Map<string, CryptoKey> = new Map();
   private peer: Peer | null = null;
   private connections: Map<string, PeerEntry> = new Map();
   private servers: Map<string, Server> = new Map();
@@ -58,6 +60,8 @@ export class P2PNetwork {
   async initialize(): Promise<void> {
     this.keyPair = await generateKeyPair();
     this.localPeer.publicKey = this.keyPair.publicKeyString;
+    this.signingKeyPair = await generateSigningKeyPair();
+    this.localPeer.verifyKey = this.signingKeyPair.verifyKeyString;
 
     return new Promise((resolve, reject) => {
       // Use the local peer id as PeerJS id for addressability
@@ -65,7 +69,10 @@ export class P2PNetwork {
         debug: 1,
       });
 
+      const timeout = setTimeout(() => reject(new Error('PeerJS initialization timeout')), 15000);
+
       this.peer.on('open', (id) => {
+        clearTimeout(timeout);
         console.log('[P2P] PeerJS ready with ID:', id);
         resolve();
       });
@@ -84,9 +91,6 @@ export class P2PNetwork {
         console.log('[P2P] Disconnected from signaling server, attempting reconnect...');
         this.peer?.reconnect();
       });
-
-      // Timeout
-      setTimeout(() => reject(new Error('PeerJS initialization timeout')), 15000);
     });
   }
 
@@ -239,19 +243,32 @@ export class P2PNetwork {
     const server = this.servers.get(serverId);
     if (!server) throw new Error('Server not found');
 
-    const invite = {
+    const payload = {
       serverId: server.id,
       serverName: server.name,
       hostPeerId: this.localPeer.id,
       hostUsername: this.localPeer.username,
+      hostVerifyKey: this.signingKeyPair?.verifyKeyString,
       timestamp: Date.now(),
     };
-    return btoa(JSON.stringify(invite));
+    const payloadStr = JSON.stringify(payload);
+    const signature = this.signingKeyPair
+      ? await signData(payloadStr, this.signingKeyPair.signingKey)
+      : '';
+    return btoa(JSON.stringify({ payload, signature }));
   }
 
   // Join server by connecting to the host's PeerJS ID
   async joinServer(inviteCode: string): Promise<Server> {
-    const invite = JSON.parse(atob(inviteCode));
+    const parsedInvite = JSON.parse(atob(inviteCode));
+    const invite = parsedInvite.payload ?? parsedInvite;
+    const signature = parsedInvite.signature;
+    if (invite.hostVerifyKey && signature) {
+      const valid = await verifySignature(JSON.stringify(invite), signature, invite.hostVerifyKey);
+      if (!valid) {
+        throw new Error('Invite code has an invalid signature — it may have been tampered with.');
+      }
+    }
     console.log('[P2P] Joining server:', invite.serverName, 'via host:', invite.hostPeerId);
 
     if (!this.peer) throw new Error('Not initialized');
@@ -296,20 +313,13 @@ export class P2PNetwork {
         const server: Server = {
           id: invite.serverId,
           name: invite.serverName,
-          channels: [
-            { id: 'general', name: 'general', type: 'text', description: 'General chat' },
-            { id: 'random', name: 'random', type: 'text', description: 'Off-topic discussions' },
-          ],
+          channels: [],
           members: [hostPeer, this.localPeer],
           hostId: invite.hostPeerId,
           createdAt: invite.timestamp,
         };
 
         this.servers.set(server.id, server);
-        this.scheduleSave('servers');
-        server.channels.forEach(ch => {
-          this.messages.set(`${server.id}:${ch.id}`, []);
-        });
 
         // Request sync from host
         this.sendToConnection(conn, {
@@ -322,6 +332,9 @@ export class P2PNetwork {
         this.sendHistoryOffer(conn);
 
         this.emitEvent({ type: 'peer-joined', payload: hostPeer, timestamp: Date.now() });
+        server.inviteCode = inviteCode;
+        this.servers.set(server.id, server);
+        this.scheduleSave('servers');
         resolve(server);
       });
 
@@ -375,7 +388,7 @@ export class P2PNetwork {
           type: 'peer-list',
           payload: { peers: [this.localPeer, ...peerList] },
           timestamp: Date.now(),
-        } as any);
+        });
       }
 
       this.emitEvent({ type: 'peer-joined', payload: peerInfo, timestamp: Date.now() });
@@ -386,10 +399,10 @@ export class P2PNetwork {
   }
 
   private setupConnectionHandlers(conn: DataConnection, remotePeerId: string): void {
-    conn.on('data', (data: unknown) => {
+    conn.on('data', async (data: unknown) => {
       try {
         const event = (typeof data === 'string' ? JSON.parse(data) : data) as P2PEvent;
-        this.handleEvent(remotePeerId, event);
+        await this.handleEvent(remotePeerId, event);
       } catch (err) {
         console.error('[P2P] Error handling data:', err);
       }
@@ -417,7 +430,7 @@ export class P2PNetwork {
 
   // ==================== EVENT HANDLING ====================
 
-  private handleEvent(fromPeerId: string, event: P2PEvent): void {
+  private async handleEvent(fromPeerId: string, event: P2PEvent): Promise<void> {
     console.log('[P2P] Event from', fromPeerId, ':', event.type);
 
     switch (event.type) {
@@ -428,7 +441,7 @@ export class P2PNetwork {
         this.handleSyncRequest(fromPeerId, event.payload);
         break;
       case 'sync-response':
-        this.handleSyncResponse(event.payload);
+        await this.handleSyncResponse(event.payload);
         break;
       case 'peer-joined':
       case 'peer-left':
@@ -436,7 +449,7 @@ export class P2PNetwork {
         this.emitEvent(event);
         break;
       case 'dm-message':
-        this.handleDMMessage(event.payload as DirectMessage, fromPeerId);
+        await this.handleDMMessage(event.payload as DirectMessage, fromPeerId);
         break;
       case 'dm-typing':
         this.handleDMTyping(event.payload.peerId || fromPeerId, event.payload.isTyping);
@@ -463,31 +476,26 @@ export class P2PNetwork {
         }
         break;
       }
-      default:
-        // Handle history merge messages (cloudless async sync)
-        if ((event as any).type === 'history-offer') {
-          this.handleHistoryOffer(fromPeerId, event.payload);
-          return;
-        }
-        if ((event as any).type === 'history-merge') {
-          this.handleHistoryMerge(event.payload);
-          return;
-        }
-        // Handle peer-list for new joiners
-        if ((event as any).type === 'peer-list') {
-          const peers = (event.payload as any).peers as PeerId[];
-          peers?.forEach(p => {
-            if (p.id !== this.localPeer.id) {
-              this.servers.forEach(server => {
-                if (!server.members.find(m => m.id === p.id)) {
-                  server.members.push(p);
-                }
-              });
-            }
-          });
-          this.emitEvent({ type: 'peer-joined', payload: peers, timestamp: Date.now() });
-        }
+      case 'history-offer':
+        this.handleHistoryOffer(fromPeerId, event.payload);
         break;
+      case 'history-merge':
+        await this.handleHistoryMerge(event.payload);
+        break;
+      case 'peer-list': {
+        const peers = (event.payload as { peers?: PeerId[] }).peers;
+        peers?.forEach(p => {
+          if (p.id !== this.localPeer.id) {
+            this.servers.forEach(server => {
+              if (!server.members.find(m => m.id === p.id)) {
+                server.members.push(p);
+              }
+            });
+          }
+        });
+        this.emitEvent({ type: 'peer-joined', payload: peers, timestamp: Date.now() });
+        break;
+      }
     }
   }
 
@@ -502,7 +510,10 @@ export class P2PNetwork {
       }
 
       channelMessages.push(message);
-      channelMessages.sort((a, b) => a.seq - b.seq);
+      channelMessages.sort((a, b) => {
+        if (a.seq && b.seq) return a.seq - b.seq;
+        return a.timestamp - b.timestamp;
+      });
       this.messages.set(key, channelMessages);
       this.scheduleSave('messages');
 
@@ -552,11 +563,16 @@ export class P2PNetwork {
     }
   }
 
-  private handleSyncResponse(payload: any): void {
+  private async handleSyncResponse(payload: any): Promise<void> {
     // Merge servers
     payload.servers?.forEach((server: Server) => {
       const existing = this.servers.get(server.id);
       if (existing) {
+        existing.name = server.name;
+        existing.icon = server.icon;
+        existing.channels = server.channels;
+        existing.hostId = server.hostId;
+        existing.createdAt = server.createdAt;
         // Merge members
         server.members.forEach(m => {
           if (!existing.members.find(em => em.id === m.id)) {
@@ -574,6 +590,13 @@ export class P2PNetwork {
         }
         this.servers.set(server.id, server);
       }
+      const storedServer = this.servers.get(server.id);
+      storedServer?.channels.forEach(ch => {
+        const key = `${server.id}:${ch.id}`;
+        if (!this.messages.has(key)) {
+          this.messages.set(key, []);
+        }
+      });
     });
 
     // Merge messages
@@ -586,7 +609,10 @@ export class P2PNetwork {
             existing.push(m);
           }
         });
-        existing.sort((a, b) => a.seq - b.seq);
+        existing.sort((a, b) => {
+          if (a.seq && b.seq) return a.seq - b.seq;
+          return a.timestamp - b.timestamp;
+        });
         this.messages.set(key, existing);
       });
     }
@@ -594,22 +620,27 @@ export class P2PNetwork {
     this.sequenceNumber = Math.max(this.sequenceNumber, payload.sequenceNumber || 0);
     console.log('[P2P] Synced with host, seq:', this.sequenceNumber);
     this.scheduleSave('servers');
-    this.scheduleSave('messages');
+    await this.persistMessages();
     
     // Emit to refresh UI
-    this.emitEvent({ type: 'sync-response' as any, payload: null, timestamp: Date.now() });
+    this.emitEvent({ type: 'sync-response', payload: null, timestamp: Date.now() });
   }
 
   // ==================== MESSAGING ====================
 
   sendMessage(serverId: string, channelId: string, content: string): Message {
+    const MAX_MESSAGE_BYTES = 8192;
+    if (new TextEncoder().encode(content).byteLength > MAX_MESSAGE_BYTES) {
+      throw new Error('Message is too long (max 8KB). Please split it into smaller messages.');
+    }
+
     const message: Message = {
       id: generateId(),
       serverId,
       channelId,
       author: this.localPeer,
       content,
-      seq: this.isHost ? ++this.sequenceNumber : Date.now(), // Host assigns proper seq
+      seq: this.isHost ? ++this.sequenceNumber : 0,
       timestamp: Date.now(),
     };
 
@@ -676,6 +707,21 @@ export class P2PNetwork {
   }
 
   // ==================== DM METHODS ====================
+
+  private async getOrDeriveSharedKey(remotePeerId: string, remotePublicKeyString: string): Promise<CryptoKey | null> {
+    if (this.sharedKeys.has(remotePeerId)) {
+      return this.sharedKeys.get(remotePeerId)!;
+    }
+    if (!this.keyPair) return null;
+    try {
+      const remotePublicKey = await importPublicKey(remotePublicKeyString);
+      const sharedKey = await deriveSharedKey(this.keyPair.privateKey, remotePublicKey);
+      this.sharedKeys.set(remotePeerId, sharedKey);
+      return sharedKey;
+    } catch {
+      return null;
+    }
+  }
 
   getOrCreateDMConversation(peer: PeerId): DMConversation {
     let conv = this.dmConversations.get(peer.id);
@@ -755,8 +801,17 @@ export class P2PNetwork {
       to: toPeer,
       content,
       timestamp: Date.now(),
-      encrypted: true,
+      encrypted: false,
     };
+
+    const toPeerPublicKey = toPeer.publicKey;
+    if (toPeerPublicKey && this.keyPair) {
+      const sharedKey = await this.getOrDeriveSharedKey(toPeerId, toPeerPublicKey);
+      if (sharedKey) {
+        dm.content = await encrypt(dm.content, sharedKey);
+        dm.encrypted = true;
+      }
+    }
 
     // Store locally
     const conv = this.getOrCreateDMConversation(toPeer);
@@ -782,15 +837,26 @@ export class P2PNetwork {
     return dm;
   }
 
-  private handleDMMessage(dm: DirectMessage, fromPeerId: string): void {
+  private async handleDMMessage(dm: DirectMessage, fromPeerId: string): Promise<void> {
     // Host relay logic - forward without inspecting content
-    if (this.isHost && (dm as any)._relayTo && (dm as any)._relayTo !== this.localPeer.id) {
-      const target = this.connections.get((dm as any)._relayTo);
+    if (this.isHost && dm._relayTo && dm._relayTo !== this.localPeer.id) {
+      const target = this.connections.get(dm._relayTo);
       if (target?.conn?.open) {
-        const { _relayTo, ...cleanDm } = dm as any;
+        const { _relayTo, ...cleanDm } = dm;
         this.sendToConnection(target.conn, { type: 'dm-message', payload: cleanDm, timestamp: Date.now() });
       }
       return;
+    }
+
+    if (dm.encrypted && dm.from.publicKey && this.keyPair) {
+      const sharedKey = await this.getOrDeriveSharedKey(dm.from.id, dm.from.publicKey);
+      if (sharedKey) {
+        try {
+          dm.content = await decrypt(dm.content, sharedKey);
+        } catch {
+          dm.content = '[Failed to decrypt message]';
+        }
+      }
     }
 
     // Store the message
@@ -850,7 +916,7 @@ export class P2PNetwork {
     });
 
     this.sendToConnection(conn, {
-      type: 'history-offer' as any,
+      type: 'history-offer',
       payload: { channels: channelSummaries, dms: dmSummaries, from: this.localPeer },
       timestamp: Date.now(),
     });
@@ -910,14 +976,14 @@ export class P2PNetwork {
       console.log('[P2P History] Merge with', fromPeerId, '— sending channels:',
         Object.keys(toSend.channels).length, 'dms:', Object.keys(toSend.dms).length);
       this.sendToConnection(conn, {
-        type: 'history-merge' as any,
+        type: 'history-merge',
         payload: { send: toSend, request: toRequest, from: this.localPeer },
         timestamp: Date.now(),
       });
     }
   }
 
-  private handleHistoryMerge(payload: any): void {
+  private async handleHistoryMerge(payload: any): Promise<void> {
     const incoming = payload.send || { channels: {}, dms: {} };
     let added = 0;
 
@@ -932,7 +998,10 @@ export class P2PNetwork {
           if (m.seq && m.seq > this.sequenceNumber) this.sequenceNumber = m.seq;
         }
       });
-      existing.sort((a, b) => (a.seq || a.timestamp) - (b.seq || b.timestamp));
+      existing.sort((a, b) => {
+        if (a.seq && b.seq) return a.seq - b.seq;
+        return a.timestamp - b.timestamp;
+      });
       this.messages.set(key, existing);
     });
 
@@ -955,9 +1024,9 @@ export class P2PNetwork {
 
     if (added > 0) {
       console.log('[P2P History] Merged', added, 'new messages from peer history');
-      this.scheduleSave('messages');
+      await this.persistMessages();
       this.scheduleSave('dms');
-      this.emitEvent({ type: 'sync-response' as any, payload: { merged: added }, timestamp: Date.now() });
+      this.emitEvent({ type: 'sync-response', payload: { merged: added }, timestamp: Date.now() });
       this.emitEvent({ type: 'dm-message', payload: { merged: added }, timestamp: Date.now() });
     }
 
@@ -988,7 +1057,7 @@ export class P2PNetwork {
 
     if (Object.keys(replySend.channels).length > 0 || Object.keys(replySend.dms).length > 0) {
       this.sendToConnection(conn, {
-        type: 'history-merge' as any,
+        type: 'history-merge',
         payload: { send: replySend, request: { channels: {}, dms: {} }, from: this.localPeer },
         timestamp: Date.now(),
       });
@@ -1085,6 +1154,14 @@ export class P2PNetwork {
     this.hostConn = null;
   }
 
+  private async persistMessages(): Promise<void> {
+    const allMessages: Message[] = [];
+    this.messages.forEach((msgs) => {
+      msgs.forEach(m => allMessages.push(m));
+    });
+    await Storage.saveMessages(allMessages);
+  }
+
   // ==================== PERSISTENCE ====================
 
   private scheduleSave(type: string): void {
@@ -1116,6 +1193,7 @@ export class P2PNetwork {
             channels: server.channels,
             hostId: server.hostId,
             createdAt: server.createdAt,
+            inviteCode: server.inviteCode,
             lastHostPeerId: server.hostId,
           }));
         }
@@ -1135,12 +1213,11 @@ export class P2PNetwork {
             peerId: conv.peerId.id,
             peerUsername: conv.peerId.username,
             peerPublicKey: conv.peerId.publicKey,
-            messages: [],
+            messages: conv.messages,
             lastSeen: conv.lastSeen,
           }));
           if (conv.messages.length > 0) {
-            const msgsWithLocal = conv.messages.map(m => ({ ...m, _localPeerId: this.localPeer.id }));
-            promises.push(Storage.saveDMMessages(msgsWithLocal));
+            promises.push(Storage.saveDMMessages(conv.messages, this.localPeer.id));
           }
         }
       }
@@ -1161,14 +1238,23 @@ export class P2PNetwork {
           this.servers.set(s.id, {
             id: s.id,
             name: s.name,
-            channels: s.channels.length > 0 ? s.channels : [
-              { id: 'general', name: 'general', type: 'text', description: 'General chat' },
-              { id: 'random', name: 'random', type: 'text', description: 'Off-topic discussions' },
-            ],
+            channels: s.channels,
             members: [this.localPeer],
             hostId: s.hostId,
             createdAt: s.createdAt,
+            inviteCode: s.inviteCode,
+            icon: (s as Server).icon,
           });
+        }
+      }
+
+      for (const server of storedServers) {
+        if (server.hostId !== this.localPeer.id && server.inviteCode) {
+          try {
+            await this.joinServer(server.inviteCode);
+          } catch {
+            console.log('[P2P] Could not reconnect to server', server.name, '— host is offline');
+          }
         }
       }
 
@@ -1180,7 +1266,10 @@ export class P2PNetwork {
         if (!existing.find(m => m.id === msg.id)) {
           existing.push(msg);
         }
-        existing.sort((a, b) => a.seq - b.seq);
+        existing.sort((a, b) => {
+          if (a.seq && b.seq) return a.seq - b.seq;
+          return a.timestamp - b.timestamp;
+        });
         this.messages.set(key, existing);
         
         // Track max sequence number

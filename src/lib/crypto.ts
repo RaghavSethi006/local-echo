@@ -26,6 +26,21 @@ export async function generateKeyPair(): Promise<KeyPair> {
   };
 }
 
+export async function generateSigningKeyPair(): Promise<{
+  signingKey: CryptoKey;
+  verifyKey: CryptoKey;
+  verifyKeyString: string;
+}> {
+  const keyPair = await window.crypto.subtle.generateKey(
+    { name: 'ECDSA', namedCurve: 'P-256' },
+    true,
+    ['sign', 'verify']
+  );
+  const verifyKeyBuffer = await window.crypto.subtle.exportKey('raw', keyPair.publicKey);
+  const verifyKeyString = btoa(String.fromCharCode(...new Uint8Array(verifyKeyBuffer)));
+  return { signingKey: keyPair.privateKey, verifyKey: keyPair.publicKey, verifyKeyString };
+}
+
 export async function importPublicKey(publicKeyString: string): Promise<CryptoKey> {
   const binaryString = atob(publicKeyString);
   const bytes = new Uint8Array(binaryString.length);
@@ -62,6 +77,43 @@ export async function deriveSharedKey(
     true,
     ['encrypt', 'decrypt']
   );
+}
+
+export async function signData(data: string, signingKey: CryptoKey): Promise<string> {
+  const encoder = new TextEncoder();
+  const sig = await window.crypto.subtle.sign(
+    { name: 'ECDSA', hash: 'SHA-256' },
+    signingKey,
+    encoder.encode(data)
+  );
+  return btoa(String.fromCharCode(...new Uint8Array(sig)));
+}
+
+export async function verifySignature(
+  data: string,
+  signature: string,
+  verifyKeyString: string
+): Promise<boolean> {
+  try {
+    const keyBytes = Uint8Array.from(atob(verifyKeyString), c => c.charCodeAt(0));
+    const verifyKey = await window.crypto.subtle.importKey(
+      'raw',
+      keyBytes,
+      { name: 'ECDSA', namedCurve: 'P-256' },
+      true,
+      ['verify']
+    );
+    const sigBytes = Uint8Array.from(atob(signature), c => c.charCodeAt(0));
+    const encoder = new TextEncoder();
+    return await window.crypto.subtle.verify(
+      { name: 'ECDSA', hash: 'SHA-256' },
+      verifyKey,
+      sigBytes,
+      encoder.encode(data)
+    );
+  } catch {
+    return false;
+  }
 }
 
 export async function encrypt(data: string, key: CryptoKey): Promise<string> {
