@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo, ReactNode } from 'react';
 import { P2PNetwork } from '@/lib/p2p-network';
 import { Server, Channel, Message, PeerId, P2PEvent, ConnectionStatus, ViewMode, DMConversation, DirectMessage, ChannelOp } from '@/types/p2p';
 import type { CommunityConfigPatch, CreateCommunityInput } from '@/types/community';
@@ -33,6 +33,7 @@ interface P2PContextType {
   selectServer: (serverId: string) => void;
   selectChannel: (channelId: string) => void;
   sendMessage: (content: string) => void;
+  loadOlderMessages: () => Promise<void>;
   generateInvite: () => Promise<string>;
   disconnect: () => void;
 
@@ -82,8 +83,14 @@ export function P2PProvider({ children }: { children: ReactNode }) {
   const currentDMPeerIdRef = useRef<string | null>(null);
   const networkRef = useRef<P2PNetwork | null>(null);
 
-  const currentServer = servers.find(s => s.id === currentServerId) || null;
-  const currentChannel = currentServer?.channels.find(c => c.id === currentChannelId) || null;
+  const currentServer = useMemo(
+    () => servers.find(s => s.id === currentServerId) || null,
+    [servers, currentServerId]
+  );
+  const currentChannel = useMemo(
+    () => currentServer?.channels.find(c => c.id === currentChannelId) || null,
+    [currentServer, currentChannelId]
+  );
   const currentDMPeer = dmConversations.find(c => c.peerId.id === currentDMPeerId)?.peerId || null;
 
   const setNetworkState = useCallback((net: P2PNetwork | null) => {
@@ -353,6 +360,12 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     setMessages(network.getMessages(currentServerId, currentChannelId));
   }, [network, currentServerId, currentChannelId]);
 
+  const loadOlderMessages = useCallback(async () => {
+    if (!network || !currentServerId || !currentChannelId) return;
+    const updated = await network.loadOlderMessages(currentServerId, currentChannelId);
+    setMessages([...updated]);
+  }, [network, currentServerId, currentChannelId]);
+
   const generateInvite = useCallback(async () => {
     if (!network || !currentServerId) throw new Error('No server selected');
     return network.generateInvite(currentServerId);
@@ -483,6 +496,7 @@ export function P2PProvider({ children }: { children: ReactNode }) {
         selectServer,
         selectChannel,
         sendMessage,
+        loadOlderMessages,
         generateInvite,
         disconnect,
         openDM,

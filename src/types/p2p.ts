@@ -112,7 +112,9 @@ export interface P2PEvent {
     | 'history-offer'
     | 'history-merge'
     | 'peer-list'
-    | 'config-sync';
+    | 'config-sync'
+    | 'ping'
+    | 'pong';
   payload: any;
   seq?: number;
   timestamp: number;

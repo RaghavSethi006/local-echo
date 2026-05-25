@@ -1,11 +1,11 @@
-// IndexedDB persistence layer for cloudless P2P chat
+// IndexedDB persistence layer for Local Echo
 // All data stays local — no cloud, no telemetry
 
 import type { Channel, DirectMessage, PeerId } from '@/types/p2p';
 import type { CommunityConfig } from '@/types/community';
 
 const DB_NAME = 'p2p-chat-store';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 export interface StoredIdentity {
   peerId: string;
@@ -53,32 +53,47 @@ function openDB(): Promise<IDBDatabase> {
 
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;
+      const oldVersion = event.oldVersion;
 
-      // Identity store (single record)
-      if (!db.objectStoreNames.contains('identity')) {
-        db.createObjectStore('identity', { keyPath: 'peerId' });
+      if (oldVersion < 1) {
+        // Identity store (single record)
+        if (!db.objectStoreNames.contains('identity')) {
+          db.createObjectStore('identity', { keyPath: 'peerId' });
+        }
+
+        // Servers
+        if (!db.objectStoreNames.contains('servers')) {
+          db.createObjectStore('servers', { keyPath: 'id' });
+        }
+
+        // Messages (keyed by "serverId:channelId:messageId")
+        if (!db.objectStoreNames.contains('messages')) {
+          const msgStore = db.createObjectStore('messages', { keyPath: 'id' });
+          msgStore.createIndex('channel', ['serverId', 'channelId'], { unique: false });
+        }
+
+        // DM Conversations
+        if (!db.objectStoreNames.contains('dmConversations')) {
+          db.createObjectStore('dmConversations', { keyPath: 'peerId' });
+        }
+
+        // DM Messages
+        if (!db.objectStoreNames.contains('dmMessages')) {
+          const dmStore = db.createObjectStore('dmMessages', { keyPath: 'id' });
+          dmStore.createIndex('peerId', 'peerId', { unique: false });
+        }
       }
 
-      // Servers
-      if (!db.objectStoreNames.contains('servers')) {
-        db.createObjectStore('servers', { keyPath: 'id' });
-      }
-
-      // Messages (keyed by "serverId:channelId:messageId")
-      if (!db.objectStoreNames.contains('messages')) {
-        const msgStore = db.createObjectStore('messages', { keyPath: 'id' });
-        msgStore.createIndex('channel', ['serverId', 'channelId'], { unique: false });
-      }
-
-      // DM Conversations
-      if (!db.objectStoreNames.contains('dmConversations')) {
-        db.createObjectStore('dmConversations', { keyPath: 'peerId' });
-      }
-
-      // DM Messages
-      if (!db.objectStoreNames.contains('dmMessages')) {
-        const dmStore = db.createObjectStore('dmMessages', { keyPath: 'id' });
-        dmStore.createIndex('peerId', 'peerId', { unique: false });
+      if (oldVersion < 2) {
+        const tx = (event.target as IDBOpenDBRequest).transaction!;
+        const msgStore = tx.objectStore('messages');
+        if (!msgStore.indexNames.contains('channel-time')) {
+          msgStore.createIndex(
+            'channel-time',
+            ['serverId', 'channelId', 'timestamp'],
+            { unique: false }
+          );
+        }
       }
     };
     request.onsuccess = () => resolve(request.result);
@@ -206,6 +221,65 @@ export async function loadAllMessages(): Promise<StoredMessage[]> {
   const request = tx.objectStore('messages').getAll();
   return new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+export async function loadRecentMessages(
+  serverId: string,
+  channelId: string,
+  limit = 100
+): Promise<StoredMessage[]> {
+  const db = await openDB();
+  const tx = db.transaction('messages', 'readonly');
+  const index = tx.objectStore('messages').index('channel-time');
+  const range = IDBKeyRange.bound(
+    [serverId, channelId, 0],
+    [serverId, channelId, Number.MAX_SAFE_INTEGER]
+  );
+  const results: StoredMessage[] = [];
+
+  return new Promise((resolve, reject) => {
+    const request = index.openCursor(range, 'prev');
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (cursor && results.length < limit) {
+        results.push(cursor.value as StoredMessage);
+        cursor.continue();
+      } else {
+        resolve(results.reverse());
+      }
+    };
+    request.onerror = () => reject(request.error);
+  });
+}
+
+export async function loadMessagesBefore(
+  serverId: string,
+  channelId: string,
+  beforeTimestamp: number,
+  limit = 50
+): Promise<StoredMessage[]> {
+  const db = await openDB();
+  const tx = db.transaction('messages', 'readonly');
+  const index = tx.objectStore('messages').index('channel-time');
+  const range = IDBKeyRange.bound(
+    [serverId, channelId, 0],
+    [serverId, channelId, beforeTimestamp - 1]
+  );
+  const results: StoredMessage[] = [];
+
+  return new Promise((resolve, reject) => {
+    const request = index.openCursor(range, 'prev');
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (cursor && results.length < limit) {
+        results.push(cursor.value as StoredMessage);
+        cursor.continue();
+      } else {
+        resolve(results.reverse());
+      }
+    };
     request.onerror = () => reject(request.error);
   });
 }

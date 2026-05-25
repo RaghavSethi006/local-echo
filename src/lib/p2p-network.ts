@@ -22,6 +22,48 @@ import type { CommunityConfig, CommunityConfigPatch, CreateCommunityInput } from
 
 type EventCallback = (event: P2PEvent) => void;
 type ServerUpdatePatch = { name?: string; icon?: string; channelOps?: ChannelOp[]; configPatch?: CommunityConfigPatch };
+type CoreServer = Omit<Server, 'config'>;
+
+interface SyncRequestPayload {
+  peerInfo?: PeerId;
+}
+
+interface SyncResponsePayload {
+  servers: CoreServer[];
+  messages: Record<string, Message[]>;
+  sequenceNumber: number;
+  onlinePeers: PeerId[];
+}
+
+interface HistoryOfferPayload {
+  channels: Record<string, string[]>;
+  dms: Record<string, string[]>;
+  from: PeerId;
+}
+
+interface HistoryMergePayload {
+  send: {
+    channels: Record<string, Message[]>;
+    dms: Record<string, DirectMessage[]>;
+  };
+  request: {
+    channels: Record<string, string[]>;
+    dms: Record<string, string[]>;
+  };
+  from: PeerId;
+}
+
+interface ChunkFrame {
+  _chunkId: string;
+  _index: number;
+  _total: number;
+  _data: string;
+}
+
+type PeerJsDataConnectionWithChannel = DataConnection & {
+  _dc?: RTCDataChannel;
+  dataChannel?: RTCDataChannel;
+};
 
 interface PeerEntry {
   peerId: PeerId;
@@ -44,6 +86,9 @@ export class P2PNetwork {
   private hostId: string | null = null;
   private hostConn: DataConnection | null = null;
   private sequenceNumber: number = 0;
+  private readonly CHUNK_SIZE = 12_000;
+  private chunkBuffers: Map<string, Map<string, Array<string | null>>> = new Map();
+  private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
 
   // DM state
   private dmConversations: Map<string, DMConversation> = new Map();
@@ -94,6 +139,8 @@ export class P2PNetwork {
         console.log('[P2P] Disconnected from signaling server, attempting reconnect...');
         this.peer?.reconnect();
       });
+
+      this.heartbeatInterval = setInterval(() => this.sendHeartbeats(), 15_000);
     });
   }
 
@@ -458,7 +505,14 @@ export class P2PNetwork {
   private setupConnectionHandlers(conn: DataConnection, remotePeerId: string): void {
     conn.on('data', async (data: unknown) => {
       try {
-        const event = (typeof data === 'string' ? JSON.parse(data) : data) as P2PEvent;
+        const raw = typeof data === 'string' ? data : JSON.stringify(data);
+        const assembled = this.receiveChunk(remotePeerId, raw);
+        if (!assembled) return;
+
+        const entry = this.connections.get(remotePeerId);
+        if (entry) entry.lastSeen = Date.now();
+
+        const event = JSON.parse(assembled) as P2PEvent;
         await this.handleEvent(remotePeerId, event);
       } catch (err) {
         console.error('[P2P] Error handling data:', err);
@@ -466,6 +520,7 @@ export class P2PNetwork {
     });
 
     conn.on('close', () => {
+      this.chunkBuffers.delete(remotePeerId);
       console.log('[P2P] Connection closed:', remotePeerId);
       const entry = this.connections.get(remotePeerId);
       if (entry) {
@@ -495,10 +550,10 @@ export class P2PNetwork {
         this.handleChatMessage(event.payload as Message, fromPeerId);
         break;
       case 'sync-request':
-        this.handleSyncRequest(fromPeerId, event.payload);
+        this.handleSyncRequest(fromPeerId, event.payload as SyncRequestPayload);
         break;
       case 'sync-response':
-        await this.handleSyncResponse(event.payload);
+        await this.handleSyncResponse(event.payload as SyncResponsePayload);
         break;
       case 'peer-joined':
       case 'peer-left':
@@ -553,10 +608,10 @@ export class P2PNetwork {
         break;
       }
       case 'history-offer':
-        this.handleHistoryOffer(fromPeerId, event.payload);
+        this.handleHistoryOffer(fromPeerId, event.payload as HistoryOfferPayload);
         break;
       case 'history-merge':
-        await this.handleHistoryMerge(event.payload);
+        await this.handleHistoryMerge(event.payload as HistoryMergePayload);
         break;
       case 'peer-list': {
         const peers = (event.payload as { peers?: PeerId[] }).peers;
@@ -570,6 +625,18 @@ export class P2PNetwork {
           }
         });
         this.emitEvent({ type: 'peer-joined', payload: peers, timestamp: Date.now() });
+        break;
+      }
+      case 'ping': {
+        const entry = this.connections.get(fromPeerId);
+        if (entry) entry.lastSeen = Date.now();
+        const conn = this.connections.get(fromPeerId)?.conn;
+        if (conn) this.sendToConnection(conn, { type: 'pong', payload: null, timestamp: Date.now() });
+        break;
+      }
+      case 'pong': {
+        const entry = this.connections.get(fromPeerId);
+        if (entry) entry.lastSeen = Date.now();
         break;
       }
     }
@@ -606,7 +673,7 @@ export class P2PNetwork {
     }
   }
 
-  private handleSyncRequest(fromPeerId: string, payload: any): void {
+  private handleSyncRequest(fromPeerId: string, payload: SyncRequestPayload): void {
     if (!this.isHost) return;
 
     // Update peer info
@@ -652,7 +719,7 @@ export class P2PNetwork {
     }
   }
 
-  private async handleSyncResponse(payload: any): Promise<void> {
+  private async handleSyncResponse(payload: SyncResponsePayload): Promise<void> {
     // Merge servers
     payload.servers?.forEach((server: Server) => {
       const existing = this.servers.get(server.id);
@@ -1020,7 +1087,7 @@ export class P2PNetwork {
     });
   }
 
-  private handleHistoryOffer(fromPeerId: string, payload: any): void {
+  private handleHistoryOffer(fromPeerId: string, payload: HistoryOfferPayload): void {
     const toSend: { channels: Record<string, Message[]>; dms: Record<string, DirectMessage[]> } = {
       channels: {},
       dms: {},
@@ -1081,7 +1148,7 @@ export class P2PNetwork {
     }
   }
 
-  private async handleHistoryMerge(payload: any): Promise<void> {
+  private async handleHistoryMerge(payload: HistoryMergePayload): Promise<void> {
     const incoming = payload.send || { channels: {}, dms: {} };
     let added = 0;
 
@@ -1181,8 +1248,114 @@ export class P2PNetwork {
 
   private sendToConnection(conn: DataConnection, event: P2PEvent): void {
     if (conn.open) {
-      conn.send(JSON.stringify(event));
+      this.sendChunked(conn, JSON.stringify(event));
     }
+  }
+
+  private sendChunked(conn: DataConnection, payload: string): void {
+    const encoder = new TextEncoder();
+    const bytes = encoder.encode(payload);
+
+    if (bytes.length <= this.CHUNK_SIZE) {
+      if (conn.open) conn.send(payload);
+      return;
+    }
+
+    const chunkId = generateId();
+    const decoder = new TextDecoder();
+    const totalChunks = Math.ceil(bytes.length / this.CHUNK_SIZE);
+    const frames: string[] = [];
+
+    for (let i = 0; i < totalChunks; i++) {
+      const slice = bytes.slice(i * this.CHUNK_SIZE, (i + 1) * this.CHUNK_SIZE);
+      frames.push(JSON.stringify({
+        _chunkId: chunkId,
+        _index: i,
+        _total: totalChunks,
+        _data: decoder.decode(slice),
+      }));
+    }
+
+    this.drainFrames(conn, frames);
+  }
+
+  private receiveChunk(peerId: string, raw: string): string | null {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+
+    if (!this.isChunkFrame(parsed)) return raw;
+
+    if (!this.chunkBuffers.has(peerId)) {
+      this.chunkBuffers.set(peerId, new Map());
+    }
+    const peerMap = this.chunkBuffers.get(peerId)!;
+
+    if (!peerMap.has(parsed._chunkId)) {
+      peerMap.set(parsed._chunkId, new Array(parsed._total).fill(null));
+    }
+    const chunks = peerMap.get(parsed._chunkId)!;
+    chunks[parsed._index] = parsed._data;
+
+    if (chunks.every(chunk => chunk !== null)) {
+      peerMap.delete(parsed._chunkId);
+      return chunks.join('');
+    }
+    return null;
+  }
+
+  private isChunkFrame(value: unknown): value is ChunkFrame {
+    if (!value || typeof value !== 'object') return false;
+    const candidate = value as Partial<ChunkFrame>;
+    return (
+      typeof candidate._chunkId === 'string' &&
+      typeof candidate._index === 'number' &&
+      typeof candidate._total === 'number' &&
+      typeof candidate._data === 'string'
+    );
+  }
+
+  private drainFrames(conn: DataConnection, frames: string[]): void {
+    const HIGH_WATER = 1_048_576;
+    const LOW_WATER = 65_536;
+    const dc = (conn as PeerJsDataConnectionWithChannel)._dc
+      ?? (conn as PeerJsDataConnectionWithChannel).dataChannel;
+
+    const sendNext = () => {
+      while (frames.length > 0) {
+        if (!conn.open) return;
+
+        if (dc && dc.bufferedAmount > HIGH_WATER) {
+          dc.bufferedAmountLowThreshold = LOW_WATER;
+          dc.addEventListener('bufferedamountlow', () => sendNext(), { once: true });
+          return;
+        }
+
+        conn.send(frames.shift()!);
+      }
+    };
+
+    sendNext();
+  }
+
+  private sendHeartbeats(): void {
+    const now = Date.now();
+    this.connections.forEach((entry, peerId) => {
+      if (!entry.conn.open) return;
+      if (now - entry.lastSeen > 45_000) {
+        console.warn('[P2P] Peer', peerId, 'is stale - reconnecting');
+        entry.conn.close();
+        return;
+      }
+      this.sendToConnection(entry.conn, {
+        type: 'ping',
+        payload: null,
+        timestamp: now,
+      });
+    });
   }
 
   private broadcast(event: P2PEvent, excludePeerId?: string): void {
@@ -1209,6 +1382,28 @@ export class P2PNetwork {
 
   getMessages(serverId: string, channelId: string): Message[] {
     return this.messages.get(`${serverId}:${channelId}`) || [];
+  }
+
+  async loadOlderMessages(serverId: string, channelId: string): Promise<Message[]> {
+    const key = `${serverId}:${channelId}`;
+    const current = this.messages.get(key) || [];
+    if (current.length === 0) return [];
+
+    const oldestTimestamp = current[0].timestamp;
+    const older = await Storage.loadMessagesBefore(serverId, channelId, oldestTimestamp, 50);
+    if (older.length === 0) return current;
+
+    const existingIds = new Set(current.map(message => message.id));
+    const merged = [
+      ...older.filter(message => !existingIds.has(message.id)),
+      ...current,
+    ];
+    merged.sort((a, b) => {
+      if (a.seq && b.seq) return a.seq - b.seq;
+      return a.timestamp - b.timestamp;
+    });
+    this.messages.set(key, merged);
+    return merged;
   }
 
   getOnlinePeers(): PeerId[] {
@@ -1238,10 +1433,15 @@ export class P2PNetwork {
   }
 
   disconnect(): void {
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
     this.connections.forEach(entry => {
       entry.conn?.close();
     });
     this.connections.clear();
+    this.chunkBuffers.clear();
     this.peer?.destroy();
     this.peer = null;
     this.servers.clear();
@@ -1377,23 +1577,27 @@ export class P2PNetwork {
         }
       }
 
-      // Load all messages
-      const storedMsgs = await Storage.loadAllMessages();
-      for (const msg of storedMsgs) {
-        const key = `${msg.serverId}:${msg.channelId}`;
-        const existing = this.messages.get(key) || [];
-        if (!existing.find(m => m.id === msg.id)) {
-          existing.push(msg);
-        }
-        existing.sort((a, b) => {
-          if (a.seq && b.seq) return a.seq - b.seq;
-          return a.timestamp - b.timestamp;
-        });
-        this.messages.set(key, existing);
-        
-        // Track max sequence number
-        if (msg.seq > this.sequenceNumber) {
-          this.sequenceNumber = msg.seq;
+      let loadedMessageCount = 0;
+      for (const server of Array.from(this.servers.values())) {
+        for (const channel of server.channels) {
+          const key = `${server.id}:${channel.id}`;
+          const recentMsgs = await Storage.loadRecentMessages(server.id, channel.id, 100);
+          loadedMessageCount += recentMsgs.length;
+          const existing = this.messages.get(key) || [];
+          recentMsgs.forEach(m => {
+            if (!existing.find(e => e.id === m.id)) existing.push(m);
+          });
+          existing.sort((a, b) => {
+            if (a.seq && b.seq) return a.seq - b.seq;
+            return a.timestamp - b.timestamp;
+          });
+          this.messages.set(key, existing);
+          if (recentMsgs.length > 0) {
+            this.sequenceNumber = Math.max(
+              this.sequenceNumber,
+              ...recentMsgs.map(m => m.seq || 0)
+            );
+          }
         }
       }
 
@@ -1415,7 +1619,7 @@ export class P2PNetwork {
       }
 
       this.persistenceReady = true;
-      console.log('[P2P] Loaded persisted data:', storedServers.length, 'servers,', storedMsgs.length, 'messages,', storedConvs.length, 'DM conversations');
+      console.log('[P2P] Loaded persisted data:', storedServers.length, 'servers,', loadedMessageCount, 'recent messages,', storedConvs.length, 'DM conversations');
     } catch (err) {
       console.error('[P2P] Error loading persisted data:', err);
       this.persistenceReady = true;
