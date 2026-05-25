@@ -21,7 +21,7 @@ export function UsernameSetup() {
     setIsInitializing(true);
     try {
       await initialize(username.trim());
-      toast.success('Welcome to P2P Chat!');
+      toast.success('Welcome to Local Echo!');
     } catch (error) {
       toast.error('Failed to initialize. Please try again.');
     } finally {
@@ -50,9 +50,9 @@ export function UsernameSetup() {
             <Wifi className="w-10 h-10 text-primary-foreground" />
           </div>
           <div>
-            <h1 className="text-3xl font-bold text-gradient">P2P Chat</h1>
+            <h1 className="text-3xl font-bold text-gradient">Local Echo</h1>
             <p className="text-muted-foreground mt-2">
-              Cloudless, decentralized, encrypted
+              Private rooms that live close to the people in them
             </p>
           </div>
         </div>
@@ -132,7 +132,7 @@ export function UsernameSetup() {
           </div>
           <div className="p-4 rounded-xl bg-card border border-border text-center">
             <Lock className="w-6 h-6 mx-auto mb-2 text-primary" />
-            <p className="text-xs text-muted-foreground">No Cloud</p>
+            <p className="text-xs text-muted-foreground">Local-first</p>
           </div>
         </div>
 

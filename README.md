@@ -1,6 +1,6 @@
-# P2P Chat — Cloudless Discord Clone
+# Local Echo
 
-A decentralized, peer-to-peer chat application inspired by Discord, built with an adaptive hybrid networking strategy.
+Local Echo is a private, local-first community chat app built on peer-to-peer WebRTC connections. It gives small groups encrypted rooms, direct messages, signed invites, local persistence, and server management without a central message server.
 
 ## 🧠 Design Philosophy
 

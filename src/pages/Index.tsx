@@ -17,8 +17,8 @@ const Index = () => {
   return (
     <>
       <Helmet>
-        <title>P2P Chat - Cloudless Discord Clone</title>
-        <meta name="description" content="A decentralized, peer-to-peer chat application with end-to-end encryption. No servers, no cloud - just direct communication." />
+        <title>Local Echo | Private peer-to-peer communities</title>
+        <meta name="description" content="Private peer-to-peer communities with encrypted chat, local-first storage, and no central message server." />
       </Helmet>
       <P2PProvider>
         <ChatApp />

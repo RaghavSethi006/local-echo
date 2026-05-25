@@ -65,7 +65,7 @@ export function ChatLayout() {
             ? currentDMPeer?.username || 'Direct Messages'
             : currentChannel
             ? `#${currentChannel.name}`
-            : currentServer?.name || 'P2P Chat'}
+            : currentServer?.name || 'Local Echo'}
         </div>
         {viewMode === 'servers' && currentServer ? (
           <button
