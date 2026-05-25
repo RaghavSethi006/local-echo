@@ -41,7 +41,6 @@ export interface StoredDMConversation {
   peerId: string;
   peerUsername: string;
   peerPublicKey?: string;
-  messages: DirectMessage[];
   lastSeen: number;
 }
 

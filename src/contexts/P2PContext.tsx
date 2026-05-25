@@ -202,17 +202,32 @@ export function P2PProvider({ children }: { children: ReactNode }) {
         break;
       case 'sync-response':
         if (net) {
-          setServers(net.getServers());
+          const updatedServers = net.getServers();
+          setServers(updatedServers);
           setOnlinePeers(net.getOnlinePeers());
           setAvailablePeersForDM(net.getAvailablePeersForDM());
-          if (serverId && channelId) {
-            setMessages(net.getMessages(serverId, channelId));
+
+          if (serverId) {
+            const updatedServer = updatedServers.find(s => s.id === serverId);
+            const channelStillValid = updatedServer?.channels.find(c => c.id === channelId);
+            const resolvedChannelId = channelStillValid?.id
+              ?? updatedServer?.channels.filter(c => c.type === 'text')[0]?.id
+              ?? null;
+
+            if (resolvedChannelId && resolvedChannelId !== channelId) {
+              setCurrentChannelIdState(resolvedChannelId);
+            }
+            const finalChannelId = resolvedChannelId || channelId;
+            if (finalChannelId) {
+              setMessages(net.getMessages(serverId, finalChannelId));
+            }
           }
         }
         break;
       case 'history-offer':
       case 'history-merge':
       case 'peer-list':
+      case 'config-sync':
         break;
     }
   }, []);
@@ -298,10 +313,10 @@ export function P2PProvider({ children }: { children: ReactNode }) {
       
       setServers(network.getServers());
       setCurrentServerIdState(server.id);
-      setCurrentChannelIdState(server.channels[0]?.id || 'general');
+      setCurrentChannelIdState(null);
       setConnectionStatus(network.getConnectionStatus());
       setOnlinePeers(network.getOnlinePeers());
-      setMessages(network.getMessages(server.id, server.channels[0]?.id || 'general'));
+      setMessages([]);
       setViewMode('servers');
       setAvailablePeersForDM(network.getAvailablePeersForDM());
     } catch (error) {

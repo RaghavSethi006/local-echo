@@ -18,7 +18,7 @@ import {
 import { generateId, generateKeyPair, generateSigningKeyPair, deriveSharedKey, encrypt, decrypt, importPublicKey, signData, verifySignature, KeyPair } from './crypto';
 import * as Storage from './storage';
 import { createDefaultCommunityConfig, getTemplateChannels } from '@/types/community';
-import type { CommunityConfigPatch, CreateCommunityInput } from '@/types/community';
+import type { CommunityConfig, CommunityConfigPatch, CreateCommunityInput } from '@/types/community';
 
 type EventCallback = (event: P2PEvent) => void;
 type ServerUpdatePatch = { name?: string; icon?: string; channelOps?: ChannelOp[]; configPatch?: CommunityConfigPatch };
@@ -159,7 +159,7 @@ export class P2PNetwork {
     if (typeof patch.name === 'string') server.name = patch.name;
     if (typeof patch.icon === 'string') server.icon = patch.icon;
     if (patch._configPatch) {
-      server.config = this.applyCommunityConfigPatch(server.config, patch._configPatch);
+      server.config = this.applyCommunityConfigPatch(server.config, patch._configPatch, server);
       server.icon = server.config.branding.icon || server.icon;
     }
     const ops = patch._channelOps || [];
@@ -184,10 +184,11 @@ export class P2PNetwork {
 
   private applyCommunityConfigPatch(
     current: Server['config'],
-    patch: CommunityConfigPatch
+    patch: CommunityConfigPatch,
+    server?: Server
   ): NonNullable<Server['config']> {
     const fallbackInput: CreateCommunityInput = {
-      name: 'Community',
+      name: server?.name || 'Community',
       tags: [],
       visibility: 'private',
       template: 'custom',
@@ -532,6 +533,25 @@ export class P2PNetwork {
         }
         break;
       }
+      case 'config-sync': {
+        const { serverId, config } = event.payload as { serverId: string; config: CommunityConfig };
+        const server = this.servers.get(serverId);
+        if (server && config) {
+          const incomingVersion = config.version ?? 0;
+          const existingVersion = server.config?.version ?? 0;
+          if (incomingVersion >= existingVersion) {
+            server.config = config;
+            this.servers.set(serverId, server);
+            this.scheduleSave('servers');
+            this.emitEvent({
+              type: 'server-updated',
+              payload: { serverId },
+              timestamp: Date.now(),
+            });
+          }
+        }
+        break;
+      }
       case 'history-offer':
         this.handleHistoryOffer(fromPeerId, event.payload);
         break;
@@ -609,12 +629,25 @@ export class P2PNetwork {
       this.sendToConnection(entry.conn, {
         type: 'sync-response',
         payload: {
-          servers: Array.from(this.servers.values()),
+          servers: Array.from(this.servers.values()).map(s => {
+            const { config: _config, ...coreServer } = s;
+            void _config;
+            return coreServer;
+          }),
           messages: allMessages,
           sequenceNumber: this.sequenceNumber,
           onlinePeers: this.getOnlinePeers(),
         },
         timestamp: Date.now(),
+      });
+      // Send config separately to keep sync-response under DataChannel size limits
+      Array.from(this.servers.values()).forEach(server => {
+        if (!server.config) return;
+        this.sendToConnection(entry.conn, {
+          type: 'config-sync',
+          payload: { serverId: server.id, config: server.config },
+          timestamp: Date.now(),
+        });
       });
     }
   }
@@ -626,7 +659,11 @@ export class P2PNetwork {
       if (existing) {
         existing.name = server.name;
         existing.icon = server.icon;
-        existing.config = server.config;
+        const incomingVersion = server.config?.version ?? 0;
+        const existingVersion = existing.config?.version ?? 0;
+        if (incomingVersion >= existingVersion) {
+          existing.config = server.config;
+        }
         existing.channels = server.channels;
         existing.hostId = server.hostId;
         existing.createdAt = server.createdAt;
@@ -1276,7 +1313,6 @@ export class P2PNetwork {
             peerId: conv.peerId.id,
             peerUsername: conv.peerId.username,
             peerPublicKey: conv.peerId.publicKey,
-            messages: conv.messages,
             lastSeen: conv.lastSeen,
           }));
           if (conv.messages.length > 0) {
@@ -1298,7 +1334,7 @@ export class P2PNetwork {
       const storedServers = await Storage.loadServers();
       for (const s of storedServers) {
         if (!this.servers.has(s.id)) {
-          this.servers.set(s.id, {
+          const restoredServer: Server = {
             id: s.id,
             name: s.name,
             channels: s.channels,
@@ -1308,7 +1344,26 @@ export class P2PNetwork {
             inviteCode: s.inviteCode,
             icon: s.icon,
             config: s.config,
-          });
+          };
+
+          // Back-fill config for servers created before the community system
+          if (!restoredServer.config) {
+            restoredServer.config = createDefaultCommunityConfig(
+              {
+                name: s.name,
+                tags: [],
+                visibility: 'private',
+                template: 'custom',
+                region: 'auto',
+                language: 'en',
+                onboardingTemplate: 'none',
+                aiSetupEnabled: false,
+              },
+              s.hostId
+            );
+          }
+
+          this.servers.set(s.id, restoredServer);
         }
       }
 

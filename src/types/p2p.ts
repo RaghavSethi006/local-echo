@@ -111,7 +111,8 @@ export interface P2PEvent {
     | 'server-deleted'
     | 'history-offer'
     | 'history-merge'
-    | 'peer-list';
+    | 'peer-list'
+    | 'config-sync';
   payload: any;
   seq?: number;
   timestamp: number;
