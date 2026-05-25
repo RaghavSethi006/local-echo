@@ -11,48 +11,117 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { Hash, Plus, Trash2, Pencil, Check, X, LogOut, ShieldAlert, Loader2 } from 'lucide-react';
+import {
+  BarChart3,
+  Bot,
+  Check,
+  Coins,
+  Hash,
+  Loader2,
+  Lock,
+  Pencil,
+  Plus,
+  ShieldAlert,
+  SlidersHorizontal,
+  Sparkles,
+  Trash2,
+  UserCog,
+  Workflow,
+  X,
+  LogOut,
+} from 'lucide-react';
 import { ChannelOp, Channel } from '@/types/p2p';
+import {
+  createDefaultCommunityConfig,
+  TEMPLATE_LABELS,
+  type AutoModRule,
+  type AutomationWorkflow,
+  type CommunityConfig,
+  type CommunityRole,
+  type PermissionFlag,
+} from '@/types/community';
 
-const PRESET_ICONS = ['💬', '🚀', '🌌', '🎮', '🎨', '🔥', '⚡️', '🌿', '🪐', '🛰️', '🦊', '🐙', '🍕', '☕️', '🎧'];
+const PRESET_ICONS = ['💬', '🚀', '🌌', '🎮', '🎨', '🔥', '⚡', '🌿', '🪐', '🛰️', '🦊', '🐙', '🍕', '☕', '🎧'];
+const primaryPermissions: PermissionFlag[] = [
+  'manage_server',
+  'manage_roles',
+  'manage_channels',
+  'manage_moderation',
+  'manage_automations',
+  'manage_bots',
+  'manage_plugins',
+  'view_analytics',
+  'use_ai',
+  'manage_ai',
+  'manage_monetization',
+];
 
 interface ServerSettingsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
+function cloneConfig(config: CommunityConfig): CommunityConfig {
+  return JSON.parse(JSON.stringify(config)) as CommunityConfig;
+}
+
 export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialogProps) {
   const {
     currentServer,
+    localPeer,
     isCurrentServerHost,
     updateCurrentServer,
     leaveCurrentServer,
     deleteCurrentServer,
   } = useP2P();
 
+  const fallbackConfig = useMemo(() => {
+    if (!currentServer || !localPeer) return null;
+    return createDefaultCommunityConfig({
+      name: currentServer.name,
+      icon: currentServer.icon,
+      tags: [],
+      visibility: 'private',
+      template: 'custom',
+      region: 'auto',
+      language: 'en',
+      onboardingTemplate: 'none',
+      aiSetupEnabled: false,
+    }, localPeer.id);
+  }, [currentServer, localPeer]);
+
   const [name, setName] = useState('');
   const [icon, setIcon] = useState('');
+  const [config, setConfig] = useState<CommunityConfig | null>(null);
   const [pendingOps, setPendingOps] = useState<ChannelOp[]>([]);
   const [editing, setEditing] = useState<Record<string, { name: string; description: string }>>({});
   const [newChannel, setNewChannel] = useState('');
+  const [newRoleName, setNewRoleName] = useState('');
   const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
   const [confirmingDestructive, setConfirmingDestructive] = useState(false);
 
-  // Reset state every time we open
   useEffect(() => {
-    if (open && currentServer) {
+    if (open && currentServer && fallbackConfig) {
+      const nextConfig = cloneConfig(currentServer.config || fallbackConfig);
       setName(currentServer.name);
-      setIcon(currentServer.icon || '');
+      setIcon(currentServer.icon || nextConfig.branding.icon || '');
+      setConfig(nextConfig);
       setPendingOps([]);
       setEditing({});
       setNewChannel('');
+      setNewRoleName('');
+      setDirty(false);
       setConfirmingDestructive(false);
     }
-  }, [open, currentServer?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, currentServer?.id, fallbackConfig]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Compute displayed channel list = current channels with pending edits applied.
   const displayedChannels = useMemo<Channel[]>(() => {
     if (!currentServer) return [];
     const list: Channel[] = currentServer.channels
@@ -71,7 +140,17 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     return list;
   }, [currentServer, pendingOps]);
 
-  if (!currentServer) return null;
+  if (!currentServer || !config) return null;
+
+  const markConfig = (updater: (draft: CommunityConfig) => void) => {
+    setConfig(prev => {
+      if (!prev) return prev;
+      const next = cloneConfig(prev);
+      updater(next);
+      return next;
+    });
+    setDirty(true);
+  };
 
   const slugify = (s: string) =>
     s
@@ -84,8 +163,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
   const addChannel = () => {
     const cleanName = slugify(newChannel);
     if (!cleanName) return;
-    const exists = displayedChannels.some(c => c.name === cleanName);
-    if (exists) {
+    if (displayedChannels.some(c => c.name === cleanName)) {
       toast.error('A channel with that name already exists');
       return;
     }
@@ -96,10 +174,6 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     };
     setPendingOps(ops => [...ops, { kind: 'add', channel }]);
     setNewChannel('');
-  };
-
-  const startEdit = (channel: Channel) => {
-    setEditing({ ...editing, [channel.id]: { name: channel.name, description: channel.description || '' } });
   };
 
   const commitEdit = (channelId: string) => {
@@ -119,18 +193,11 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     setEditing(next);
   };
 
-  const cancelEdit = (channelId: string) => {
-    const next = { ...editing };
-    delete next[channelId];
-    setEditing(next);
-  };
-
   const removeChannel = (channelId: string) => {
     if (displayedChannels.length <= 1) {
       toast.error('Server must have at least one channel');
       return;
     }
-    // If it's a freshly-added channel, just drop the pending add
     const wasJustAdded = pendingOps.some(op => op.kind === 'add' && op.channel.id === channelId);
     if (wasJustAdded) {
       setPendingOps(ops => ops.filter(op => !(op.kind === 'add' && op.channel.id === channelId)));
@@ -139,10 +206,78 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     setPendingOps(ops => [...ops, { kind: 'delete', channelId }]);
   };
 
+  const addRole = () => {
+    const roleName = newRoleName.trim();
+    if (!roleName) return;
+    markConfig(draft => {
+      draft.roles.push({
+        id: `role-${Date.now()}`,
+        name: roleName,
+        description: 'Custom community role',
+        color: '#38bdf8',
+        position: Math.max(...draft.roles.map(role => role.position), 0) - 1,
+        permissions: ['view_channels', 'send_messages'],
+        mentionable: true,
+        hoisted: false,
+      });
+    });
+    setNewRoleName('');
+  };
+
+  const toggleRolePermission = (roleId: string, permission: PermissionFlag) => {
+    markConfig(draft => {
+      const role = draft.roles.find(r => r.id === roleId);
+      if (!role) return;
+      role.permissions = role.permissions.includes(permission)
+        ? role.permissions.filter(p => p !== permission)
+        : [...role.permissions, permission];
+    });
+  };
+
+  const removeRole = (roleId: string) => {
+    if (['owner', 'admin', 'moderator', 'member', 'newcomer'].includes(roleId)) {
+      toast.error('Default system roles cannot be deleted');
+      return;
+    }
+    markConfig(draft => {
+      draft.roles = draft.roles.filter(role => role.id !== roleId);
+    });
+  };
+
+  const addAutomodRule = () => {
+    const rule: AutoModRule = {
+      id: `rule-${Date.now()}`,
+      name: 'Keyword escalation',
+      enabled: true,
+      trigger: 'keyword',
+      threshold: 1,
+      action: 'notify-mods',
+    };
+    markConfig(draft => {
+      draft.automodRules.unshift(rule);
+    });
+  };
+
+  const addAutomation = () => {
+    const workflow: AutomationWorkflow = {
+      id: `workflow-${Date.now()}`,
+      name: 'Notify moderators',
+      enabled: true,
+      trigger: 'message-created',
+      condition: 'Message contains watched keyword',
+      action: 'alert-mods',
+      description: 'Alerts moderators when a watched keyword appears.',
+    };
+    markConfig(draft => {
+      draft.automations.unshift(workflow);
+    });
+  };
+
   const hasChanges =
     name.trim() !== currentServer.name ||
     icon !== (currentServer.icon || '') ||
-    pendingOps.length > 0;
+    pendingOps.length > 0 ||
+    dirty;
 
   const handleSave = async () => {
     if (!hasChanges) return;
@@ -152,8 +287,31 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         name: name.trim() !== currentServer.name ? name.trim() : undefined,
         icon: icon !== (currentServer.icon || '') ? icon : undefined,
         channelOps: pendingOps,
+        configPatch: {
+          branding: { ...config.branding, icon },
+          discovery: config.discovery,
+          invites: config.invites,
+          onboarding: config.onboarding,
+          roles: config.roles,
+          permissionOverwrites: config.permissionOverwrites,
+          moderation: config.moderation,
+          automodRules: config.automodRules,
+          automations: config.automations,
+          analytics: config.analytics,
+          integrations: config.integrations,
+          monetization: config.monetization,
+          backups: config.backups,
+          auditLogEntry: {
+            id: `audit-${Date.now()}`,
+            actorId: localPeer?.id || 'local',
+            action: 'community.settings_updated',
+            target: currentServer.name,
+            reason: 'Saved from server management dashboard',
+            timestamp: Date.now(),
+          },
+        },
       });
-      toast.success('Server updated');
+      toast.success('Server management settings saved');
       onOpenChange(false);
     } catch (e: any) {
       toast.error(e?.message || 'Failed to update server');
@@ -181,166 +339,422 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     }
   };
 
+  const sectionClass = 'space-y-4';
+  const templateName = TEMPLATE_LABELS[config.template];
+
   return (
     <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) setConfirmingDestructive(false); }}>
-      <DialogContent className="sm:max-w-lg max-h-[85vh] overflow-y-auto">
+      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-6xl">
         <DialogHeader>
-          <DialogTitle>Server Settings</DialogTitle>
+          <DialogTitle className="flex items-center gap-2">
+            <SlidersHorizontal className="h-5 w-5" />
+            Server Management
+          </DialogTitle>
           <DialogDescription>
             {isCurrentServerHost
-              ? 'You are the host. Changes broadcast to all connected peers.'
-              : 'You are a member. You can leave the server but cannot edit it.'}
+              ? `Manage ${templateName} community systems. Changes sync to connected peers.`
+              : 'You are a member. You can inspect settings but cannot edit them.'}
           </DialogDescription>
         </DialogHeader>
 
-        <fieldset disabled={!isCurrentServerHost} className="space-y-5 py-2 disabled:opacity-60">
-          {/* Name */}
-          <div className="space-y-2">
-            <Label htmlFor="srv-name">Server name</Label>
-            <Input
-              id="srv-name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="My server"
-              maxLength={48}
-            />
-          </div>
+        <fieldset disabled={!isCurrentServerHost} className="disabled:opacity-60">
+          <Tabs defaultValue="overview" className="space-y-4">
+            <TabsList className="flex h-auto flex-wrap justify-start">
+              <TabsTrigger value="overview">Overview</TabsTrigger>
+              <TabsTrigger value="branding">Branding</TabsTrigger>
+              <TabsTrigger value="roles">Roles</TabsTrigger>
+              <TabsTrigger value="channels">Channels</TabsTrigger>
+              <TabsTrigger value="moderation">Moderation</TabsTrigger>
+              <TabsTrigger value="automation">Automation</TabsTrigger>
+              <TabsTrigger value="analytics">Analytics</TabsTrigger>
+              <TabsTrigger value="integrations">Integrations</TabsTrigger>
+              <TabsTrigger value="audit">Audit</TabsTrigger>
+            </TabsList>
 
-          {/* Icon */}
-          <div className="space-y-2">
-            <Label>Icon</Label>
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => setIcon('')}
-                className={cn(
-                  'w-10 h-10 rounded-lg flex items-center justify-center text-xs font-semibold border transition-colors',
-                  icon === ''
-                    ? 'border-primary bg-primary/10 text-primary'
-                    : 'border-border bg-secondary text-muted-foreground hover:bg-channel-hover'
-                )}
-                aria-label="No icon (use first letter)"
-              >
-                {name.charAt(0).toUpperCase() || '?'}
-              </button>
-              {PRESET_ICONS.map((emoji) => (
-                <button
-                  key={emoji}
-                  type="button"
-                  onClick={() => setIcon(emoji)}
-                  className={cn(
-                    'w-10 h-10 rounded-lg flex items-center justify-center text-lg border transition-colors',
-                    icon === emoji
-                      ? 'border-primary bg-primary/10'
-                      : 'border-border bg-secondary hover:bg-channel-hover'
-                  )}
-                >
-                  {emoji}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Channels */}
-          <div className="space-y-2">
-            <Label>Channels</Label>
-            <div className="space-y-1 rounded-lg border border-border bg-secondary/30 p-2">
-              {displayedChannels.map((ch) => {
-                const draft = editing[ch.id];
-                if (draft) {
-                  return (
-                    <div key={ch.id} className="flex flex-col gap-2 p-2 rounded-md bg-background border border-border">
+            <TabsContent value="overview" className={sectionClass}>
+              <div className="grid gap-4 lg:grid-cols-3">
+                <Card className="lg:col-span-2">
+                  <CardHeader>
+                    <CardTitle>Community Overview</CardTitle>
+                    <CardDescription>Identity, discoverability, region, language, and invite behavior.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="grid gap-3 sm:grid-cols-[100px_1fr]">
+                      <div className="space-y-2">
+                        <Label>Icon</Label>
+                        <div className="grid grid-cols-3 gap-1">
+                          {PRESET_ICONS.slice(0, 9).map(emoji => (
+                            <button
+                              key={emoji}
+                              type="button"
+                              onClick={() => { setIcon(emoji); markConfig(d => { d.branding.icon = emoji; }); }}
+                              className={cn('h-9 rounded-lg border text-lg', icon === emoji ? 'border-primary bg-primary/10' : 'border-border bg-secondary')}
+                            >
+                              {emoji}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="space-y-3">
+                        <div className="space-y-2">
+                          <Label>Server name</Label>
+                          <Input value={name} onChange={e => setName(e.target.value)} maxLength={48} />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Description</Label>
+                          <Textarea
+                            value={config.branding.description}
+                            onChange={e => markConfig(d => { d.branding.description = e.target.value; })}
+                            rows={3}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-3">
+                      <div className="space-y-2">
+                        <Label>Visibility</Label>
+                        <select
+                          value={config.discovery.visibility}
+                          onChange={e => markConfig(d => { d.discovery.visibility = e.target.value as any; d.discovery.allowDiscovery = e.target.value === 'public'; })}
+                          className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                        >
+                          <option value="private">Private</option>
+                          <option value="unlisted">Unlisted</option>
+                          <option value="public">Public</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Region</Label>
+                        <Input value={config.discovery.region} onChange={e => markConfig(d => { d.discovery.region = e.target.value; })} />
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Language</Label>
+                        <Input value={config.discovery.language} onChange={e => markConfig(d => { d.discovery.language = e.target.value; })} />
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Tags</Label>
                       <Input
-                        value={draft.name}
-                        onChange={(e) =>
-                          setEditing({ ...editing, [ch.id]: { ...draft, name: e.target.value } })
-                        }
-                        placeholder="channel-name"
-                        className="h-8 text-sm"
+                        value={config.discovery.tags.join(', ')}
+                        onChange={e => markConfig(d => { d.discovery.tags = e.target.value.split(',').map(t => t.trim()).filter(Boolean); })}
+                        placeholder="gaming, ai, study"
                       />
-                      <Textarea
-                        value={draft.description}
-                        onChange={(e) =>
-                          setEditing({ ...editing, [ch.id]: { ...draft, description: e.target.value } })
-                        }
-                        placeholder="Topic (optional)"
-                        rows={2}
-                        className="text-xs"
-                      />
-                      <div className="flex justify-end gap-1">
-                        <Button size="sm" variant="ghost" onClick={() => cancelEdit(ch.id)}>
-                          <X className="w-3.5 h-3.5" />
-                        </Button>
-                        <Button size="sm" onClick={() => commitEdit(ch.id)}>
-                          <Check className="w-3.5 h-3.5" />
+                    </div>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>System Snapshot</CardTitle>
+                    <CardDescription>Live community infrastructure status.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3 text-sm">
+                    <Metric label="Roles" value={config.roles.length} />
+                    <Metric label="Channels" value={displayedChannels.length} />
+                    <Metric label="Automod rules" value={config.automodRules.length} />
+                    <Metric label="Automations" value={config.automations.length} />
+                    <Metric label="Audit events" value={config.auditLog.length} />
+                  </CardContent>
+                </Card>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="branding" className={sectionClass}>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Branding And Customization</CardTitle>
+                  <CardDescription>Welcome pages, invite splash, banners, gradients, and accent colors.</CardDescription>
+                </CardHeader>
+                <CardContent className="grid gap-4 lg:grid-cols-2">
+                  <Field label="Banner URL" value={config.branding.bannerUrl || ''} onChange={value => markConfig(d => { d.branding.bannerUrl = value; })} />
+                  <Field label="Wallpaper URL" value={config.branding.wallpaperUrl || ''} onChange={value => markConfig(d => { d.branding.wallpaperUrl = value; })} />
+                  <Field label="Accent color" value={config.branding.accentColor} onChange={value => markConfig(d => { d.branding.accentColor = value; })} />
+                  <Field label="Gradient from" value={config.branding.gradientFrom} onChange={value => markConfig(d => { d.branding.gradientFrom = value; })} />
+                  <Field label="Gradient to" value={config.branding.gradientTo} onChange={value => markConfig(d => { d.branding.gradientTo = value; })} />
+                  <Field label="Welcome title" value={config.branding.welcomeTitle} onChange={value => markConfig(d => { d.branding.welcomeTitle = value; })} />
+                  <div className="space-y-2 lg:col-span-2">
+                    <Label>Welcome message</Label>
+                    <Textarea value={config.branding.welcomeMessage} onChange={e => markConfig(d => { d.branding.welcomeMessage = e.target.value; })} rows={3} />
+                  </div>
+                  <div className="space-y-2 lg:col-span-2">
+                    <Label>Invite splash text</Label>
+                    <Textarea value={config.branding.inviteSplash} onChange={e => markConfig(d => { d.branding.inviteSplash = e.target.value; })} rows={2} />
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="roles" className={sectionClass}>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2"><UserCog className="h-5 w-5" /> Role Hierarchy</CardTitle>
+                  <CardDescription>Unlimited roles, hierarchy, colors, mentionability, and core permissions.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <div className="flex gap-2">
+                    <Input value={newRoleName} onChange={e => setNewRoleName(e.target.value)} placeholder="New role name" />
+                    <Button type="button" onClick={addRole}><Plus className="mr-2 h-4 w-4" /> Add role</Button>
+                  </div>
+                  {config.roles.slice().sort((a, b) => b.position - a.position).map(role => (
+                    <div key={role.id} className="rounded-lg border border-border p-3">
+                      <div className="flex items-start gap-3">
+                        <div className="mt-1 h-4 w-4 rounded-full" style={{ backgroundColor: role.color }} />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Input
+                              value={role.name}
+                              onChange={e => markConfig(d => { const r = d.roles.find(item => item.id === role.id); if (r) r.name = e.target.value; })}
+                              className="h-8 max-w-64"
+                            />
+                            <Badge variant="secondary">position {role.position}</Badge>
+                            {role.temporary && <Badge variant="outline">temporary</Badge>}
+                            {role.hoisted && <Badge variant="outline">visible</Badge>}
+                          </div>
+                          <Input
+                            value={role.description}
+                            onChange={e => markConfig(d => { const r = d.roles.find(item => item.id === role.id); if (r) r.description = e.target.value; })}
+                            className="mt-2 h-8"
+                          />
+                          <div className="mt-3 flex flex-wrap gap-1.5">
+                            {primaryPermissions.map(permission => (
+                              <button
+                                key={permission}
+                                type="button"
+                                onClick={() => toggleRolePermission(role.id, permission)}
+                                className={cn(
+                                  'rounded-full border px-2 py-1 text-xs',
+                                  role.permissions.includes(permission)
+                                    ? 'border-primary bg-primary/10 text-primary'
+                                    : 'border-border text-muted-foreground'
+                                )}
+                              >
+                                {permission.replace(/_/g, ' ')}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <Button type="button" variant="ghost" size="sm" onClick={() => removeRole(role.id)}>
+                          <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
                     </div>
-                  );
-                }
-                return (
-                  <div
-                    key={ch.id}
-                    className="group flex items-center gap-2 px-2 py-1.5 rounded-md hover:bg-channel-hover"
-                  >
-                    <Hash className="w-4 h-4 text-muted-foreground flex-shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-foreground truncate">{ch.name}</p>
-                      {ch.description && (
-                        <p className="text-xs text-muted-foreground truncate">{ch.description}</p>
-                      )}
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => startEdit(ch)}
-                      className="p-1 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 transition-opacity"
-                      aria-label="Edit channel"
-                    >
-                      <Pencil className="w-3.5 h-3.5" />
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => removeChannel(ch.id)}
-                      className="p-1 text-destructive/80 hover:text-destructive opacity-0 group-hover:opacity-100 transition-opacity"
-                      aria-label="Delete channel"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                );
-              })}
+                  ))}
+                </CardContent>
+              </Card>
+            </TabsContent>
 
-              {/* New channel input */}
-              <div className="flex items-center gap-2 pt-1 border-t border-border mt-1">
-                <Hash className="w-4 h-4 text-muted-foreground flex-shrink-0 ml-2" />
-                <Input
-                  value={newChannel}
-                  onChange={(e) => setNewChannel(e.target.value)}
-                  onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addChannel())}
-                  placeholder="new-channel"
-                  className="h-8 text-sm border-0 bg-transparent focus-visible:ring-0 px-1"
-                />
-                <Button size="sm" variant="ghost" onClick={addChannel} disabled={!newChannel.trim()}>
-                  <Plus className="w-4 h-4" />
-                </Button>
+            <TabsContent value="channels" className={sectionClass}>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Channel Management</CardTitle>
+                  <CardDescription>Text and voice spaces with editable descriptions. Voice channels are still marked coming soon in chat.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {displayedChannels.map(ch => {
+                    const draft = editing[ch.id];
+                    if (draft) {
+                      return (
+                        <div key={ch.id} className="rounded-md border border-border bg-background p-2">
+                          <Input value={draft.name} onChange={e => setEditing({ ...editing, [ch.id]: { ...draft, name: e.target.value } })} />
+                          <Textarea className="mt-2" value={draft.description} onChange={e => setEditing({ ...editing, [ch.id]: { ...draft, description: e.target.value } })} rows={2} />
+                          <div className="mt-2 flex justify-end gap-1">
+                            <Button size="sm" variant="ghost" onClick={() => { const next = { ...editing }; delete next[ch.id]; setEditing(next); }}><X className="h-4 w-4" /></Button>
+                            <Button size="sm" onClick={() => commitEdit(ch.id)}><Check className="h-4 w-4" /></Button>
+                          </div>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div key={ch.id} className="group flex items-center gap-2 rounded-md border border-border p-2">
+                        <Hash className="h-4 w-4 text-muted-foreground" />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium">{ch.name}</p>
+                          {ch.description && <p className="truncate text-xs text-muted-foreground">{ch.description}</p>}
+                        </div>
+                        <Badge variant="outline">{ch.type}</Badge>
+                        <Button size="sm" variant="ghost" onClick={() => setEditing({ ...editing, [ch.id]: { name: ch.name, description: ch.description || '' } })}><Pencil className="h-4 w-4" /></Button>
+                        <Button size="sm" variant="ghost" onClick={() => removeChannel(ch.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                      </div>
+                    );
+                  })}
+                  <div className="flex gap-2 pt-2">
+                    <Input value={newChannel} onChange={e => setNewChannel(e.target.value)} onKeyDown={e => e.key === 'Enter' && addChannel()} placeholder="new-channel" />
+                    <Button type="button" onClick={addChannel}><Plus className="mr-2 h-4 w-4" /> Add</Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="moderation" className={sectionClass}>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2"><ShieldAlert className="h-5 w-5" /> Safety Controls</CardTitle>
+                    <CardDescription>Manual and automatic moderation switches.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <div className="space-y-2">
+                      <Label>Verification level</Label>
+                      <select
+                        value={config.moderation.verificationLevel}
+                        onChange={e => markConfig(d => { d.moderation.verificationLevel = e.target.value as any; })}
+                        className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                      >
+                        <option value="none">None</option>
+                        <option value="low">Low</option>
+                        <option value="medium">Medium</option>
+                        <option value="high">High</option>
+                        <option value="strict">Strict</option>
+                      </select>
+                    </div>
+                    {Object.entries(config.moderation).filter(([key]) => key !== 'verificationLevel').map(([key, value]) => (
+                      <ToggleRow
+                        key={key}
+                        label={key.replace(/([A-Z])/g, ' $1')}
+                        checked={Boolean(value)}
+                        onCheckedChange={checked => markConfig(d => { (d.moderation as any)[key] = checked; })}
+                      />
+                    ))}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Auto Moderation Rules</CardTitle>
+                    <CardDescription>Spam, raid, scam, mass mention, keyword, and AI risk actions.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <Button type="button" variant="outline" onClick={addAutomodRule}><Plus className="mr-2 h-4 w-4" /> Add rule</Button>
+                    {config.automodRules.map(rule => (
+                      <div key={rule.id} className="rounded-lg border border-border p-3">
+                        <div className="flex items-center justify-between gap-3">
+                          <Input value={rule.name} onChange={e => markConfig(d => { const r = d.automodRules.find(item => item.id === rule.id); if (r) r.name = e.target.value; })} />
+                          <Switch checked={rule.enabled} onCheckedChange={checked => markConfig(d => { const r = d.automodRules.find(item => item.id === rule.id); if (r) r.enabled = checked; })} />
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                          <Badge variant="secondary">{rule.trigger}</Badge>
+                          <Badge variant="outline">threshold {rule.threshold}</Badge>
+                          <Badge variant="outline">{rule.action}</Badge>
+                        </div>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
               </div>
-            </div>
-            {pendingOps.length > 0 && (
-              <p className="text-xs text-muted-foreground">
-                {pendingOps.length} unsaved change{pendingOps.length > 1 ? 's' : ''}
-              </p>
-            )}
-          </div>
+            </TabsContent>
+
+            <TabsContent value="automation" className={sectionClass}>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2"><Workflow className="h-5 w-5" /> Automation Builder</CardTitle>
+                  <CardDescription>No-code workflows with triggers, conditions, and actions.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <Button type="button" variant="outline" onClick={addAutomation}><Plus className="mr-2 h-4 w-4" /> Add workflow</Button>
+                  {config.automations.map(workflow => (
+                    <div key={workflow.id} className="rounded-lg border border-border p-3">
+                      <div className="flex items-center justify-between gap-3">
+                        <Input value={workflow.name} onChange={e => markConfig(d => { const w = d.automations.find(item => item.id === workflow.id); if (w) w.name = e.target.value; })} />
+                        <Switch checked={workflow.enabled} onCheckedChange={checked => markConfig(d => { const w = d.automations.find(item => item.id === workflow.id); if (w) w.enabled = checked; })} />
+                      </div>
+                      <p className="mt-2 text-sm text-muted-foreground">{workflow.description}</p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <Badge>{workflow.trigger}</Badge>
+                        <Badge variant="outline">{workflow.condition}</Badge>
+                        <Badge variant="secondary">{workflow.action}</Badge>
+                      </div>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="analytics" className={sectionClass}>
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2"><BarChart3 className="h-5 w-5" /> Analytics And Insights</CardTitle>
+                  <CardDescription>Engagement, moderation, retention, channel activity, and AI health signals.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {Object.entries(config.analytics).filter(([key]) => key !== 'retentionDays').map(([key, value]) => (
+                    <ToggleRow key={key} label={key.replace(/([A-Z])/g, ' $1')} checked={Boolean(value)} onCheckedChange={checked => markConfig(d => { (d.analytics as any)[key] = checked; })} />
+                  ))}
+                  <Field label="Retention days" value={String(config.analytics.retentionDays)} onChange={value => markConfig(d => { d.analytics.retentionDays = Number(value) || 30; })} />
+                </CardContent>
+              </Card>
+            </TabsContent>
+
+            <TabsContent value="integrations" className={sectionClass}>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2"><Bot className="h-5 w-5" /> Bots, Plugins, Webhooks</CardTitle>
+                    <CardDescription>Extension ecosystem controls and sandbox requirements.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {Object.entries(config.integrations).map(([key, value]) => (
+                      <ToggleRow key={key} label={key.replace(/([A-Z])/g, ' $1')} checked={Boolean(value)} onCheckedChange={checked => markConfig(d => { (d.integrations as any)[key] = checked; })} />
+                    ))}
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2"><Coins className="h-5 w-5" /> Monetization</CardTitle>
+                    <CardDescription>Premium roles, donations, ticketed channels, and supporter tooling.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {Object.entries(config.monetization).map(([key, value]) => (
+                      <ToggleRow key={key} label={key.replace(/([A-Z])/g, ' $1')} checked={Boolean(value)} onCheckedChange={checked => markConfig(d => { (d.monetization as any)[key] = checked; })} />
+                    ))}
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2"><Lock className="h-5 w-5" /> Backups</CardTitle>
+                    <CardDescription>Encrypted backup policy for future hybrid deployments.</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <ToggleRow label="Enabled" checked={config.backups.enabled} onCheckedChange={checked => markConfig(d => { d.backups.enabled = checked; })} />
+                    <ToggleRow label="Encrypted" checked={config.backups.encrypted} onCheckedChange={checked => markConfig(d => { d.backups.encrypted = checked; })} />
+                    <ToggleRow label="Include audit logs" checked={config.backups.includeAuditLogs} onCheckedChange={checked => markConfig(d => { d.backups.includeAuditLogs = checked; })} />
+                    <Field label="Retention days" value={String(config.backups.retentionDays)} onChange={value => markConfig(d => { d.backups.retentionDays = Number(value) || 30; })} />
+                  </CardContent>
+                </Card>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="audit" className={sectionClass}>
+              <Card>
+                <CardHeader>
+                  <CardTitle>Audit Logs</CardTitle>
+                  <CardDescription>Signed-style local admin history for settings and management actions.</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {config.auditLog.length === 0 ? (
+                    <p className="text-sm text-muted-foreground">No audit events yet.</p>
+                  ) : config.auditLog.map(entry => (
+                    <div key={entry.id} className="rounded-lg border border-border p-3 text-sm">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="font-medium">{entry.action}</span>
+                        <span className="text-xs text-muted-foreground">{new Date(entry.timestamp).toLocaleString()}</span>
+                      </div>
+                      <p className="text-muted-foreground">{entry.reason || 'No reason provided'}</p>
+                      <p className="text-xs text-muted-foreground">Actor: {entry.actorId} / Target: {entry.target}</p>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            </TabsContent>
+          </Tabs>
         </fieldset>
 
-        {/* Footer actions */}
-        <div className="flex flex-col gap-2 pt-3 border-t border-border">
+        <div className="flex flex-col gap-2 border-t border-border pt-3">
           {isCurrentServerHost && (
-            <div className="flex gap-2 justify-end">
+            <div className="flex justify-end gap-2">
               <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
               <Button onClick={handleSave} disabled={!hasChanges || saving}>
-                {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : null}
-                Save changes
+                {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Save server systems
               </Button>
             </div>
           )}
@@ -350,7 +764,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
             onClick={handleDestructive}
             className="w-full"
           >
-            {isCurrentServerHost ? <ShieldAlert className="w-4 h-4 mr-2" /> : <LogOut className="w-4 h-4 mr-2" />}
+            {isCurrentServerHost ? <ShieldAlert className="mr-2 h-4 w-4" /> : <LogOut className="mr-2 h-4 w-4" />}
             {confirmingDestructive
               ? 'Tap again to confirm'
               : isCurrentServerHost
@@ -360,5 +774,40 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function Field({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+  return (
+    <div className="space-y-2">
+      <Label>{label}</Label>
+      <Input value={value} onChange={e => onChange(e.target.value)} />
+    </div>
+  );
+}
+
+function ToggleRow({
+  label,
+  checked,
+  onCheckedChange,
+}: {
+  label: string;
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 rounded-lg border border-border p-3">
+      <Label className="capitalize">{label}</Label>
+      <Switch checked={checked} onCheckedChange={onCheckedChange} />
+    </div>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="font-semibold">{value}</span>
+    </div>
   );
 }
