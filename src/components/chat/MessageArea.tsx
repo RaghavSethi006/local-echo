@@ -1,19 +1,59 @@
 import { useRef, useEffect } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { useP2P } from '@/contexts/P2PContext';
 import { Hash, Users } from 'lucide-react';
 import { MessageInput } from './MessageInput';
 import { MessageItem } from './MessageItem';
 
 export function MessageArea() {
-  const { currentServer, currentChannel, messages, onlinePeers } = useP2P();
+  const { currentServer, currentChannel, messages, onlinePeers, loadOlderMessages } = useP2P();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
+  const loadingOlderRef = useRef(false);
+  const lastTopLoadKeyRef = useRef<string | null>(null);
+
+  const virtualizer = useVirtualizer({
+    count: messages.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 76,
+    overscan: 10,
+    getItemKey: (index) => messages[index]?.id || index,
+  });
+
+  const virtualItems = virtualizer.getVirtualItems();
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (messages.length === 0 || !stickToBottomRef.current) return;
+    virtualizer.scrollToIndex(messages.length - 1, { align: 'end' });
+  }, [messages.length, virtualizer]);
+
+  useEffect(() => {
+    const firstItem = virtualItems[0];
+    const oldestMessageId = messages[0]?.id;
+    if (
+      !firstItem ||
+      firstItem.index > 2 ||
+      loadingOlderRef.current ||
+      messages.length === 0 ||
+      !oldestMessageId ||
+      lastTopLoadKeyRef.current === oldestMessageId
+    ) {
+      return;
     }
-  }, [messages]);
+
+    lastTopLoadKeyRef.current = oldestMessageId;
+    loadingOlderRef.current = true;
+    loadOlderMessages().finally(() => {
+      loadingOlderRef.current = false;
+    });
+  }, [loadOlderMessages, messages.length, virtualItems]);
+
+  const handleScroll = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+  };
 
   if (!currentServer || !currentChannel) {
     return (
@@ -24,7 +64,7 @@ export function MessageArea() {
               <Hash className="w-10 h-10 text-muted-foreground" />
             </div>
             <div>
-              <h2 className="text-xl font-semibold text-foreground">Welcome to P2P Chat</h2>
+              <h2 className="text-xl font-semibold text-foreground">Welcome to Local Echo</h2>
               <p className="text-muted-foreground mt-1">
                 Create or join a server to start chatting
               </p>
@@ -58,7 +98,7 @@ export function MessageArea() {
       </header>
 
       {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto">
+      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
         <div className="py-4">
           {/* Welcome Message */}
           {messages.length === 0 && (
@@ -79,21 +119,42 @@ export function MessageArea() {
                 </div>
                 <p className="text-sm text-muted-foreground">
                   Messages are transmitted peer-to-peer with end-to-end encryption. 
-                  No servers involved — your data stays with you.
+                  No central message server involved. Your data stays with your peers.
                 </p>
               </div>
             </div>
           )}
 
           {/* Message List */}
-          <div className="space-y-0.5">
-            {messages.map((message, index) => (
-              <MessageItem 
-                key={message.id} 
-                message={message}
-                showAvatar={index === 0 || messages[index - 1]?.author.id !== message.author.id}
-              />
-            ))}
+          <div
+            style={{
+              height: `${virtualizer.getTotalSize()}px`,
+              position: 'relative',
+            }}
+          >
+            {virtualItems.map((virtualItem) => {
+              const message = messages[virtualItem.index];
+              if (!message) return null;
+              return (
+                <div
+                  key={virtualItem.key}
+                  data-index={virtualItem.index}
+                  ref={virtualizer.measureElement}
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    width: '100%',
+                    transform: `translateY(${virtualItem.start}px)`,
+                  }}
+                >
+                  <MessageItem
+                    message={message}
+                    showAvatar={virtualItem.index === 0 || messages[virtualItem.index - 1]?.author.id !== message.author.id}
+                  />
+                </div>
+              );
+            })}
           </div>
         </div>
       </div>

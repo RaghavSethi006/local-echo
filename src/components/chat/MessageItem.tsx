@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import { Message } from '@/types/p2p';
 import { cn } from '@/lib/utils';
 import { formatDistanceToNow } from 'date-fns';
@@ -7,7 +8,7 @@ interface MessageItemProps {
   showAvatar?: boolean;
 }
 
-export function MessageItem({ message, showAvatar = true }: MessageItemProps) {
+export const MessageItem = memo(function MessageItem({ message, showAvatar = true }: MessageItemProps) {
   const formatTime = (timestamp: number) => {
     const date = new Date(timestamp);
     const now = new Date();
@@ -96,4 +97,4 @@ export function MessageItem({ message, showAvatar = true }: MessageItemProps) {
       </div>
     </div>
   );
-}
+});
