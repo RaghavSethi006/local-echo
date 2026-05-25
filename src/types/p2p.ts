@@ -1,4 +1,5 @@
 // P2P Networking Types
+import type { CommunityConfig } from './community';
 
 export interface PeerId {
   id: string;
@@ -65,6 +66,7 @@ export interface Server {
   id: string;
   name: string;
   icon?: string;
+  config?: CommunityConfig;
   channels: Channel[];
   members: PeerId[];
   hostId: string;

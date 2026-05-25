@@ -2,6 +2,7 @@
 // All data stays local — no cloud, no telemetry
 
 import type { Channel, DirectMessage, PeerId } from '@/types/p2p';
+import type { CommunityConfig } from '@/types/community';
 
 const DB_NAME = 'p2p-chat-store';
 const DB_VERSION = 1;
@@ -17,6 +18,7 @@ export interface StoredServer {
   id: string;
   name: string;
   icon?: string;
+  config?: CommunityConfig;
   channels: Channel[];
   hostId: string;
   createdAt: number;

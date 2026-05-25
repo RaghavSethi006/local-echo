@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, ReactNode } from 'react';
 import { P2PNetwork } from '@/lib/p2p-network';
 import { Server, Channel, Message, PeerId, P2PEvent, ConnectionStatus, ViewMode, DMConversation, DirectMessage, ChannelOp } from '@/types/p2p';
+import type { CommunityConfigPatch, CreateCommunityInput } from '@/types/community';
 import * as Storage from '@/lib/storage';
 import { sendBrowserNotification } from '@/hooks/use-notifications';
 
@@ -27,7 +28,7 @@ interface P2PContextType {
   
   // Actions
   initialize: (username: string) => Promise<void>;
-  createServer: (name: string) => Promise<Server>;
+  createServer: (input: string | CreateCommunityInput) => Promise<Server>;
   joinServer: (inviteCode: string) => Promise<void>;
   selectServer: (serverId: string) => void;
   selectChannel: (channelId: string) => void;
@@ -37,7 +38,7 @@ interface P2PContextType {
 
   // Server customization (host only)
   isCurrentServerHost: boolean;
-  updateCurrentServer: (patch: { name?: string; icon?: string; channelOps?: ChannelOp[] }) => Promise<void>;
+  updateCurrentServer: (patch: { name?: string; icon?: string; channelOps?: ChannelOp[]; configPatch?: CommunityConfigPatch }) => Promise<void>;
   leaveCurrentServer: () => Promise<void>;
   deleteCurrentServer: () => Promise<void>;
   
@@ -270,10 +271,10 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     await initializeNetwork(identity.username, identity.peerId);
   }, [initializeNetwork]);
 
-  const createServer = useCallback(async (name: string) => {
+  const createServer = useCallback(async (input: string | CreateCommunityInput) => {
     if (!network) throw new Error('Network not initialized');
     
-    const server = await network.createServer(name);
+    const server = await network.createServer(input);
     setServers(network.getServers());
     setCurrentServerIdState(server.id);
     setCurrentChannelIdState(server.channels[0]?.id || null);
@@ -347,7 +348,7 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     !!network && !!currentServerId && network.isServerHost(currentServerId);
 
   const updateCurrentServer = useCallback(
-    async (patch: { name?: string; icon?: string; channelOps?: ChannelOp[] }) => {
+    async (patch: { name?: string; icon?: string; channelOps?: ChannelOp[]; configPatch?: CommunityConfigPatch }) => {
       if (!network || !currentServerId) throw new Error('No server selected');
       await network.updateServer(currentServerId, patch);
       setServers(network.getServers());

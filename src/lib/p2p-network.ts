@@ -17,8 +17,11 @@ import {
 } from '@/types/p2p';
 import { generateId, generateKeyPair, generateSigningKeyPair, deriveSharedKey, encrypt, decrypt, importPublicKey, signData, verifySignature, KeyPair } from './crypto';
 import * as Storage from './storage';
+import { createDefaultCommunityConfig, getTemplateChannels } from '@/types/community';
+import type { CommunityConfigPatch, CreateCommunityInput } from '@/types/community';
 
 type EventCallback = (event: P2PEvent) => void;
+type ServerUpdatePatch = { name?: string; icon?: string; channelOps?: ChannelOp[]; configPatch?: CommunityConfigPatch };
 
 interface PeerEntry {
   peerId: PeerId;
@@ -105,14 +108,26 @@ export class P2PNetwork {
 
   // ==================== SERVER MANAGEMENT ====================
 
-  async createServer(name: string): Promise<Server> {
+  async createServer(input: string | CreateCommunityInput): Promise<Server> {
+    const createInput: CreateCommunityInput = typeof input === 'string'
+      ? {
+          name: input,
+          tags: [],
+          visibility: 'private',
+          template: 'custom',
+          region: 'auto',
+          language: 'en',
+          onboardingTemplate: 'none',
+          aiSetupEnabled: false,
+        }
+      : input;
+    const channels = getTemplateChannels(createInput.template);
     const server: Server = {
       id: generateId(),
-      name,
-      channels: [
-        { id: 'general', name: 'general', type: 'text', description: 'General chat' },
-        { id: 'random', name: 'random', type: 'text', description: 'Off-topic discussions' },
-      ],
+      name: createInput.name,
+      icon: createInput.icon,
+      config: createDefaultCommunityConfig(createInput, this.localPeer.id),
+      channels,
       members: [this.localPeer],
       hostId: this.localPeer.id,
       createdAt: Date.now(),
@@ -140,9 +155,13 @@ export class P2PNetwork {
     return !!s && s.hostId === this.localPeer.id;
   }
 
-  private applyServerPatch(server: Server, patch: Partial<Server> & { _channelOps?: ChannelOp[] }): void {
+  private applyServerPatch(server: Server, patch: Partial<Server> & { _channelOps?: ChannelOp[]; _configPatch?: CommunityConfigPatch }): void {
     if (typeof patch.name === 'string') server.name = patch.name;
     if (typeof patch.icon === 'string') server.icon = patch.icon;
+    if (patch._configPatch) {
+      server.config = this.applyCommunityConfigPatch(server.config, patch._configPatch);
+      server.icon = server.config.branding.icon || server.icon;
+    }
     const ops = patch._channelOps || [];
     for (const op of ops) {
       if (op.kind === 'add') {
@@ -163,9 +182,45 @@ export class P2PNetwork {
     }
   }
 
+  private applyCommunityConfigPatch(
+    current: Server['config'],
+    patch: CommunityConfigPatch
+  ): NonNullable<Server['config']> {
+    const fallbackInput: CreateCommunityInput = {
+      name: 'Community',
+      tags: [],
+      visibility: 'private',
+      template: 'custom',
+      region: 'auto',
+      language: 'en',
+      onboardingTemplate: 'none',
+      aiSetupEnabled: false,
+    };
+    const base = current || createDefaultCommunityConfig(fallbackInput, this.localPeer.id);
+    const next = {
+      ...base,
+      branding: { ...base.branding, ...patch.branding },
+      discovery: { ...base.discovery, ...patch.discovery },
+      invites: { ...base.invites, ...patch.invites },
+      onboarding: { ...base.onboarding, ...patch.onboarding },
+      moderation: { ...base.moderation, ...patch.moderation },
+      analytics: { ...base.analytics, ...patch.analytics },
+      integrations: { ...base.integrations, ...patch.integrations },
+      monetization: { ...base.monetization, ...patch.monetization },
+      backups: { ...base.backups, ...patch.backups },
+      roles: patch.roles || base.roles,
+      permissionOverwrites: patch.permissionOverwrites || base.permissionOverwrites,
+      automodRules: patch.automodRules || base.automodRules,
+      automations: patch.automations || base.automations,
+      auditLog: patch.auditLogEntry ? [patch.auditLogEntry, ...base.auditLog].slice(0, 250) : base.auditLog,
+      version: base.version + 1,
+    };
+    return next;
+  }
+
   async updateServer(
     serverId: string,
-    patch: { name?: string; icon?: string; channelOps?: ChannelOp[] }
+    patch: ServerUpdatePatch
   ): Promise<Server> {
     const server = this.servers.get(serverId);
     if (!server) throw new Error('Server not found');
@@ -177,6 +232,7 @@ export class P2PNetwork {
       name: patch.name,
       icon: patch.icon,
       _channelOps: patch.channelOps || [],
+      _configPatch: patch.configPatch,
     };
     this.applyServerPatch(server, fullPatch);
     this.servers.set(server.id, server);
@@ -570,6 +626,7 @@ export class P2PNetwork {
       if (existing) {
         existing.name = server.name;
         existing.icon = server.icon;
+        existing.config = server.config;
         existing.channels = server.channels;
         existing.hostId = server.hostId;
         existing.createdAt = server.createdAt;
@@ -1195,6 +1252,7 @@ export class P2PNetwork {
             id: server.id,
             name: server.name,
             icon: server.icon,
+            config: server.config,
             channels: server.channels,
             hostId: server.hostId,
             createdAt: server.createdAt,
@@ -1249,6 +1307,7 @@ export class P2PNetwork {
             createdAt: s.createdAt,
             inviteCode: s.inviteCode,
             icon: s.icon,
+            config: s.config,
           });
         }
       }
