@@ -364,10 +364,10 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
               <TabsTrigger value="branding">Branding</TabsTrigger>
               <TabsTrigger value="roles">Roles</TabsTrigger>
               <TabsTrigger value="channels">Channels</TabsTrigger>
-              <TabsTrigger value="moderation">Moderation</TabsTrigger>
-              <TabsTrigger value="automation">Automation</TabsTrigger>
-              <TabsTrigger value="analytics">Analytics</TabsTrigger>
-              <TabsTrigger value="integrations">Integrations</TabsTrigger>
+              <TabsTrigger value="moderation">Moderation 🗺️</TabsTrigger>
+              <TabsTrigger value="automation">Automation 🗺️</TabsTrigger>
+              <TabsTrigger value="analytics">Analytics 🗺️</TabsTrigger>
+              <TabsTrigger value="integrations">Integrations 🗺️</TabsTrigger>
               <TabsTrigger value="audit">Audit</TabsTrigger>
             </TabsList>
 
@@ -586,6 +586,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
             </TabsContent>
 
             <TabsContent value="moderation" className={sectionClass}>
+              <RoadmapBanner feature="Moderation" />
               <div className="grid gap-4 lg:grid-cols-2">
                 <Card>
                   <CardHeader>
@@ -644,6 +645,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
             </TabsContent>
 
             <TabsContent value="automation" className={sectionClass}>
+              <RoadmapBanner feature="Automation" />
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2"><Workflow className="h-5 w-5" /> Automation Builder</CardTitle>
@@ -670,6 +672,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
             </TabsContent>
 
             <TabsContent value="analytics" className={sectionClass}>
+              <RoadmapBanner feature="Analytics" />
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2"><BarChart3 className="h-5 w-5" /> Analytics And Insights</CardTitle>
@@ -685,6 +688,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
             </TabsContent>
 
             <TabsContent value="integrations" className={sectionClass}>
+              <RoadmapBanner feature="Integrations, Monetization and Backups" />
               <div className="grid gap-4 lg:grid-cols-2">
                 <Card>
                   <CardHeader>
@@ -808,6 +812,19 @@ function Metric({ label, value }: { label: string; value: number }) {
     <div className="flex items-center justify-between rounded-lg border border-border px-3 py-2">
       <span className="text-muted-foreground">{label}</span>
       <span className="font-semibold">{value}</span>
+    </div>
+  );
+}
+
+function RoadmapBanner({ feature }: { feature: string }) {
+  return (
+    <div className="mb-4 flex items-start gap-3 rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+      <span className="mt-0.5 shrink-0 text-base">🗺️</span>
+      <span>
+        <span className="font-medium text-foreground">{feature} — Roadmap feature.</span>{' '}
+        These settings are saved and synced to peers but are not enforced in the current version.
+        Enforcement will be added in a future update.
+      </span>
     </div>
   );
 }

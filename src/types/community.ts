@@ -285,7 +285,6 @@ const channelTemplates: Record<ServerTemplateId, Channel[]> = {
     { id: 'general', name: 'general', type: 'text', description: 'Squad chat' },
     { id: 'lfg', name: 'lfg', type: 'text', description: 'Find teammates' },
     { id: 'clips', name: 'clips', type: 'text', description: 'Share highlights' },
-    { id: 'lobby', name: 'Lobby', type: 'voice', description: 'Voice lobby' },
   ],
   developer: [
     { id: 'announcements', name: 'announcements', type: 'text', description: 'Project updates' },
@@ -299,7 +298,6 @@ const channelTemplates: Record<ServerTemplateId, Channel[]> = {
     { id: 'general', name: 'general', type: 'text', description: 'Study group chat' },
     { id: 'resources', name: 'resources', type: 'text', description: 'Notes and links' },
     { id: 'homework-help', name: 'homework-help', type: 'text', description: 'Questions and support' },
-    { id: 'study-room', name: 'Study Room', type: 'voice', description: 'Focus voice room' },
   ],
   startup: [
     { id: 'general', name: 'general', type: 'text', description: 'Company-wide chat' },
@@ -327,7 +325,6 @@ const channelTemplates: Record<ServerTemplateId, Channel[]> = {
     { id: 'team-general', name: 'team-general', type: 'text', description: 'Workspace discussion' },
     { id: 'incidents', name: 'incidents', type: 'text', description: 'Incident coordination' },
     { id: 'exec', name: 'exec', type: 'text', description: 'Leadership space' },
-    { id: 'all-hands', name: 'All Hands', type: 'voice', description: 'Company voice room' },
   ],
   minimal: [
     { id: 'general', name: 'general', type: 'text', description: 'General chat' },
