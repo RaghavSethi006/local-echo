@@ -3,15 +3,23 @@
 
 import type { Channel, DirectMessage, PeerId } from '@/types/p2p';
 import type { CommunityConfig } from '@/types/community';
+import { encrypt, decrypt } from './crypto';
 
 const DB_NAME = 'p2p-chat-store';
 const DB_VERSION = 2;
+
+let _storageKey: CryptoKey | null = null;
+
+export function setStorageKey(key: CryptoKey | null): void {
+  _storageKey = key;
+}
 
 export interface StoredIdentity {
   peerId: string;
   username: string;
   publicKey?: string;
   privateKey?: string; // Stored as JWK
+  storageKeyJwk?: JsonWebKey; // AES-GCM key persisted as JWK
 }
 
 export interface StoredServer {
@@ -313,12 +321,15 @@ export async function saveDMMessages(messages: DirectMessage[], localPeerId: str
   const db = await openDB();
   const tx = db.transaction('dmMessages', 'readwrite');
   const store = tx.objectStore('dmMessages');
-  messages.forEach(msg => {
-    // Store with conversationPeerId — the OTHER person's ID
+  for (const msg of messages) {
     const otherPeerId = msg.from.id === localPeerId ? msg.to.id : msg.from.id;
-    const stored = { ...msg, peerId: otherPeerId };
+    let stored: Record<string, unknown> = { ...msg, peerId: otherPeerId };
+    if (_storageKey && msg.content && !msg.encrypted) {
+      stored.content = await encrypt(msg.content, _storageKey);
+      stored.encrypted = true;
+    }
     store.put(stored);
-  });
+  }
   return new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
@@ -331,8 +342,19 @@ export async function loadDMMessages(peerId: string): Promise<DirectMessage[]> {
   const index = tx.objectStore('dmMessages').index('peerId');
   const request = index.getAll(peerId);
   return new Promise((resolve, reject) => {
-    request.onsuccess = () => {
+    request.onsuccess = async () => {
       const msgs = request.result as DirectMessage[];
+      if (_storageKey) {
+        for (const msg of msgs) {
+          if (msg.encrypted && msg.content) {
+            try {
+              msg.content = await decrypt(msg.content, _storageKey);
+            } catch {
+              msg.content = '[Failed to decrypt message]';
+            }
+          }
+        }
+      }
       msgs.sort((a, b) => a.timestamp - b.timestamp);
       resolve(msgs);
     };
@@ -345,7 +367,21 @@ export async function loadAllDMMessages(): Promise<DirectMessage[]> {
   const tx = db.transaction('dmMessages', 'readonly');
   const request = tx.objectStore('dmMessages').getAll();
   return new Promise((resolve, reject) => {
-    request.onsuccess = () => resolve(request.result as DirectMessage[]);
+    request.onsuccess = async () => {
+      const msgs = request.result as DirectMessage[];
+      if (_storageKey) {
+        for (const msg of msgs) {
+          if (msg.encrypted && msg.content) {
+            try {
+              msg.content = await decrypt(msg.content, _storageKey);
+            } catch {
+              msg.content = '[Failed to decrypt message]';
+            }
+          }
+        }
+      }
+      resolve(msgs);
+    };
     request.onerror = () => reject(request.error);
   });
 }

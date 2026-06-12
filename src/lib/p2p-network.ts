@@ -15,7 +15,7 @@ import {
   DMConversation,
   ChannelOp,
 } from '@/types/p2p';
-import { generateId, generateKeyPair, generateSigningKeyPair, deriveSharedKey, encrypt, decrypt, importPublicKey, signData, verifySignature, KeyPair } from './crypto';
+import { generateId, generateKeyPair, generateSigningKeyPair, deriveSharedKey, encrypt, decrypt, importPublicKey, signData, verifySignature, KeyPair, generateStorageKey, exportStorageKey, importStorageKey } from './crypto';
 import * as Storage from './storage';
 import { createDefaultCommunityConfig, getTemplateChannels } from '@/types/community';
 import type { CommunityConfig, CommunityConfigPatch, CreateCommunityInput } from '@/types/community';
@@ -76,6 +76,7 @@ export class P2PNetwork {
   private localPeer: PeerId;
   private keyPair: KeyPair | null = null;
   private signingKeyPair: { signingKey: CryptoKey; verifyKey: CryptoKey; verifyKeyString: string } | null = null;
+  private storageKey: CryptoKey | null = null;
   private sharedKeys: Map<string, CryptoKey> = new Map();
   private peer: Peer | null = null;
   private connections: Map<string, PeerEntry> = new Map();
@@ -110,6 +111,10 @@ export class P2PNetwork {
     this.localPeer.publicKey = this.keyPair.publicKeyString;
     this.signingKeyPair = await generateSigningKeyPair();
     this.localPeer.verifyKey = this.signingKeyPair.verifyKeyString;
+
+    // Generate an AES-GCM storage key for at-rest DM encryption
+    this.storageKey = await generateStorageKey();
+    Storage.setStorageKey(this.storageKey);
 
     return new Promise((resolve, reject) => {
       // Use the local peer id as PeerJS id for addressability
@@ -1476,11 +1481,15 @@ export class P2PNetwork {
       const promises: Promise<void>[] = [];
 
       if (saves.has('identity')) {
-        promises.push(Storage.saveIdentity({
+        const identity: Parameters<typeof Storage.saveIdentity>[0] = {
           peerId: this.localPeer.id,
           username: this.localPeer.username,
           publicKey: this.localPeer.publicKey,
-        }));
+        };
+        if (this.storageKey) {
+          identity.storageKeyJwk = await exportStorageKey(this.storageKey);
+        }
+        promises.push(Storage.saveIdentity(identity));
       }
 
       if (saves.has('servers')) {
@@ -1530,6 +1539,13 @@ export class P2PNetwork {
   // Load persisted data into memory
   async loadPersistedData(): Promise<void> {
     try {
+      // Restore storage key for at-rest DM decryption
+      const identity = await Storage.loadIdentity();
+      if (identity?.storageKeyJwk) {
+        this.storageKey = await importStorageKey(identity.storageKeyJwk);
+        Storage.setStorageKey(this.storageKey);
+      }
+
       // Load servers
       const storedServers = await Storage.loadServers();
       for (const s of storedServers) {

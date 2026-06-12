@@ -159,6 +159,28 @@ export async function decrypt(encryptedData: string, key: CryptoKey): Promise<st
   return decoder.decode(decryptedBuffer);
 }
 
+export async function generateStorageKey(): Promise<CryptoKey> {
+  return window.crypto.subtle.generateKey(
+    { name: 'AES-GCM', length: 256 },
+    true,
+    ['encrypt', 'decrypt']
+  );
+}
+
+export async function exportStorageKey(key: CryptoKey): Promise<JsonWebKey> {
+  return window.crypto.subtle.exportKey('jwk', key);
+}
+
+export async function importStorageKey(jwk: JsonWebKey): Promise<CryptoKey> {
+  return window.crypto.subtle.importKey(
+    'jwk',
+    jwk,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
 export function generateId(): string {
   const array = new Uint8Array(16);
   window.crypto.getRandomValues(array);
