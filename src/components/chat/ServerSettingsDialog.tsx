@@ -44,7 +44,9 @@ import {
   type AutomationWorkflow,
   type CommunityConfig,
   type CommunityRole,
+  type ModerationSettings,
   type PermissionFlag,
+  type ServerVisibility,
 } from '@/types/community';
 
 const PRESET_ICONS = ['💬', '🚀', '🌌', '🎮', '🎨', '🔥', '⚡', '🌿', '🪐', '🛰️', '🦊', '🐙', '🍕', '☕', '🎧'];
@@ -313,8 +315,8 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
       });
       toast.success('Server management settings saved');
       onOpenChange(false);
-    } catch (e: any) {
-      toast.error(e?.message || 'Failed to update server');
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to update server');
     } finally {
       setSaving(false);
     }
@@ -334,8 +336,8 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         toast.success('Left server');
       }
       onOpenChange(false);
-    } catch (e: any) {
-      toast.error(e?.message || 'Failed');
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed');
     }
   };
 
@@ -415,7 +417,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                         <Label>Visibility</Label>
                         <select
                           value={config.discovery.visibility}
-                          onChange={e => markConfig(d => { d.discovery.visibility = e.target.value as any; d.discovery.allowDiscovery = e.target.value === 'public'; })}
+                          onChange={e => markConfig(d => { d.discovery.visibility = e.target.value as ServerVisibility; d.discovery.allowDiscovery = e.target.value === 'public'; })}
                           className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
                         >
                           <option value="private">Private</option>
@@ -598,7 +600,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                       <Label>Verification level</Label>
                       <select
                         value={config.moderation.verificationLevel}
-                        onChange={e => markConfig(d => { d.moderation.verificationLevel = e.target.value as any; })}
+                        onChange={e => markConfig(d => { d.moderation.verificationLevel = e.target.value as ModerationSettings['verificationLevel']; })}
                         className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
                       >
                         <option value="none">None</option>
@@ -613,7 +615,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                         key={key}
                         label={key.replace(/([A-Z])/g, ' $1')}
                         checked={Boolean(value)}
-                        onCheckedChange={checked => markConfig(d => { (d.moderation as any)[key] = checked; })}
+                        onCheckedChange={checked => markConfig(d => { (d.moderation as Record<string, unknown>)[key] = checked; })}
                       />
                     ))}
                   </CardContent>
@@ -680,7 +682,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {Object.entries(config.analytics).filter(([key]) => key !== 'retentionDays').map(([key, value]) => (
-                    <ToggleRow key={key} label={key.replace(/([A-Z])/g, ' $1')} checked={Boolean(value)} onCheckedChange={checked => markConfig(d => { (d.analytics as any)[key] = checked; })} />
+                    <ToggleRow key={key} label={key.replace(/([A-Z])/g, ' $1')} checked={Boolean(value)} onCheckedChange={checked => markConfig(d => { (d.analytics as Record<string, unknown>)[key] = checked; })} />
                   ))}
                   <Field label="Retention days" value={String(config.analytics.retentionDays)} onChange={value => markConfig(d => { d.analytics.retentionDays = Number(value) || 30; })} />
                 </CardContent>
@@ -697,7 +699,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                   </CardHeader>
                   <CardContent className="space-y-3">
                     {Object.entries(config.integrations).map(([key, value]) => (
-                      <ToggleRow key={key} label={key.replace(/([A-Z])/g, ' $1')} checked={Boolean(value)} onCheckedChange={checked => markConfig(d => { (d.integrations as any)[key] = checked; })} />
+                      <ToggleRow key={key} label={key.replace(/([A-Z])/g, ' $1')} checked={Boolean(value)} onCheckedChange={checked => markConfig(d => { (d.integrations as Record<string, unknown>)[key] = checked; })} />
                     ))}
                   </CardContent>
                 </Card>
@@ -708,7 +710,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                   </CardHeader>
                   <CardContent className="space-y-3">
                     {Object.entries(config.monetization).map(([key, value]) => (
-                      <ToggleRow key={key} label={key.replace(/([A-Z])/g, ' $1')} checked={Boolean(value)} onCheckedChange={checked => markConfig(d => { (d.monetization as any)[key] = checked; })} />
+                      <ToggleRow key={key} label={key.replace(/([A-Z])/g, ' $1')} checked={Boolean(value)} onCheckedChange={checked => markConfig(d => { (d.monetization as Record<string, unknown>)[key] = checked; })} />
                     ))}
                   </CardContent>
                 </Card>

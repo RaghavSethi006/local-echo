@@ -50,8 +50,8 @@ export function NewDMDialog({ open, onOpenChange }: NewDMDialogProps) {
       setUsernameInput('');
       setMode('list');
       onOpenChange(false);
-    } catch (e: any) {
-      toast.error(e?.message || 'Failed to start DM');
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to start DM');
     }
   };
 

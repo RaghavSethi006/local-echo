@@ -10,7 +10,9 @@ import {
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import { Hash, MessageCircle, Search, Loader2 } from 'lucide-react';
+import type { DirectMessage } from '@/types/p2p';
 import * as Storage from '@/lib/storage';
+import type { StoredMessage } from '@/lib/storage';
 
 interface SearchDialogProps {
   open: boolean;
@@ -34,8 +36,8 @@ type SearchHit = {
 export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
   const { servers, dmConversations, localPeer, selectServer, selectChannel, openDM } = useP2P();
   const [query, setQuery] = useState('');
-  const [allChannelMsgs, setAllChannelMsgs] = useState<any[]>([]);
-  const [allDMMsgs, setAllDMMsgs] = useState<any[]>([]);
+  const [allChannelMsgs, setAllChannelMsgs] = useState<StoredMessage[]>([]);
+  const [allDMMsgs, setAllDMMsgs] = useState<DirectMessage[]>([]);
   const [loading, setLoading] = useState(false);
 
   // Load all messages from local storage when dialog opens (covers offline channels too)

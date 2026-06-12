@@ -17,8 +17,8 @@ export function MessageInput() {
       sendMessage(content.trim());
       setContent('');
       inputRef.current?.focus();
-    } catch (err: any) {
-      toast.error(err.message || 'Failed to send message');
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to send message');
     }
   };
 

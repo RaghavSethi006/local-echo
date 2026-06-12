@@ -191,7 +191,7 @@ export function P2PProvider({ children }: { children: ReactNode }) {
         if (net) {
           const remaining = net.getServers();
           setServers(remaining);
-          const deletedId = (event.payload as any)?.serverId;
+          const deletedId = (event.payload as { serverId?: string })?.serverId;
           if (deletedId === serverId) {
             const next = remaining[0];
             if (next) {

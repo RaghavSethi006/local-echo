@@ -90,7 +90,7 @@ export interface SignalingMessage {
   type: 'offer' | 'answer' | 'ice-candidate' | 'peer-info' | 'host-migration' | 'dm-offer' | 'dm-answer';
   from: PeerId;
   to?: string;
-  payload: any;
+  payload: unknown;
 }
 
 export interface P2PEvent {
@@ -115,7 +115,7 @@ export interface P2PEvent {
     | 'config-sync'
     | 'ping'
     | 'pong';
-  payload: any;
+  payload: unknown;
   seq?: number;
   timestamp: number;
 }

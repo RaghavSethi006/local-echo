@@ -36,8 +36,8 @@ export function DMConversation() {
     try {
       await sendDM(content.trim());
       setContent('');
-    } catch (error: any) {
-      toast.error(error?.message || 'Failed to send DM');
+    } catch (error: unknown) {
+      toast.error(error instanceof Error ? error.message : 'Failed to send DM');
     } finally {
       sendDMTyping(false);
       inputRef.current?.focus();
