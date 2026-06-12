@@ -14,7 +14,7 @@ export interface Message {
   channelId: string;
   author: PeerId;
   content: string;
-  seq: number;
+  seq?: number;
   timestamp: number;
   encrypted?: boolean;
 }
@@ -109,12 +109,12 @@ export interface P2PEvent {
     | 'dm-connection-response'
     | 'server-updated'
     | 'server-deleted'
-    | 'history-offer'
-    | 'history-merge'
     | 'peer-list'
     | 'config-sync'
     | 'ping'
-    | 'pong';
+    | 'pong'
+    | 'yjs-sync'
+    | 'yjs-update';
   payload: unknown;
   seq?: number;
   timestamp: number;

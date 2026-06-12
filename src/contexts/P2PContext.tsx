@@ -7,6 +7,7 @@ import { sendBrowserNotification } from '@/hooks/use-notifications';
 
 interface P2PContextType {
   network: P2PNetwork | null;
+  getAllMessages: () => Message[];
   isInitialized: boolean;
   connectionStatus: ConnectionStatus;
   localPeer: PeerId | null;
@@ -32,7 +33,7 @@ interface P2PContextType {
   joinServer: (inviteCode: string) => Promise<void>;
   selectServer: (serverId: string) => void;
   selectChannel: (channelId: string) => void;
-  sendMessage: (content: string) => void;
+  sendMessage: (content: string) => Promise<void>;
   loadOlderMessages: () => Promise<void>;
   generateInvite: () => Promise<string>;
   disconnect: () => void;
@@ -353,10 +354,14 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     }
   }, [network, currentServerId]);
 
-  const sendMessage = useCallback((content: string) => {
+  const getAllMessages = useCallback((): Message[] => {
+    return network?.getAllMessages() || [];
+  }, [network]);
+
+  const sendMessage = useCallback(async (content: string) => {
     if (!network || !currentServerId || !currentChannelId) return;
     
-    network.sendMessage(currentServerId, currentChannelId, content);
+    await network.sendMessage(currentServerId, currentChannelId, content);
     setMessages(network.getMessages(currentServerId, currentChannelId));
   }, [network, currentServerId, currentChannelId]);
 
@@ -476,6 +481,7 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     <P2PContext.Provider
       value={{
         network,
+        getAllMessages,
         isInitialized,
         connectionStatus,
         localPeer,

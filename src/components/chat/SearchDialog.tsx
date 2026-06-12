@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useP2P } from '@/contexts/P2PContext';
 import {
   Dialog,
@@ -9,10 +9,8 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
-import { Hash, MessageCircle, Search, Loader2 } from 'lucide-react';
-import type { DirectMessage } from '@/types/p2p';
-import * as Storage from '@/lib/storage';
-import type { StoredMessage } from '@/lib/storage';
+import { Hash, MessageCircle, Search } from 'lucide-react';
+import type { Message, DirectMessage } from '@/types/p2p';
 
 interface SearchDialogProps {
   open: boolean;
@@ -34,27 +32,18 @@ type SearchHit = {
 };
 
 export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
-  const { servers, dmConversations, localPeer, selectServer, selectChannel, openDM } = useP2P();
+  const { servers, dmConversations, localPeer, selectServer, selectChannel, openDM, getAllMessages } = useP2P();
   const [query, setQuery] = useState('');
-  const [allChannelMsgs, setAllChannelMsgs] = useState<StoredMessage[]>([]);
-  const [allDMMsgs, setAllDMMsgs] = useState<DirectMessage[]>([]);
-  const [loading, setLoading] = useState(false);
 
-  // Load all messages from local storage when dialog opens (covers offline channels too)
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-    setLoading(true);
-    Promise.all([Storage.loadAllMessages(), Storage.loadAllDMMessages()])
-      .then(([channelMsgs, dmMsgs]) => {
-        if (cancelled) return;
-        setAllChannelMsgs(channelMsgs);
-        setAllDMMsgs(dmMsgs);
-      })
-      .catch(() => {})
-      .finally(() => !cancelled && setLoading(false));
-    return () => { cancelled = true; };
-  }, [open]);
+  // Channel messages come from P2PNetwork's Yjs-managed cache; DM messages still via P2PEvent
+  const allChannelMsgs: Message[] = useMemo(() => getAllMessages(), [getAllMessages, open]);
+  const allDMMsgs: DirectMessage[] = useMemo(() => {
+    const all: DirectMessage[] = [];
+    for (const conv of dmConversations) {
+      all.push(...conv.messages);
+    }
+    return all;
+  }, [dmConversations, open]);
 
   const serverById = useMemo(() => {
     const m = new Map(servers.map(s => [s.id, s]));
@@ -183,19 +172,13 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
         </div>
 
         <div className="flex-1 overflow-y-auto -mx-6 px-6 mt-2">
-          {loading && (
-            <div className="flex items-center justify-center py-8 text-muted-foreground text-sm gap-2">
-              <Loader2 className="w-4 h-4 animate-spin" /> Loading…
-            </div>
-          )}
-
-          {!loading && query && hits.length === 0 && (
+          {query && hits.length === 0 && (
             <div className="py-10 text-center">
               <p className="text-sm text-muted-foreground">No messages match "{query}"</p>
             </div>
           )}
 
-          {!loading && !query && (
+          {!query && (
             <div className="py-10 text-center">
               <p className="text-sm text-muted-foreground">
                 Start typing to search.

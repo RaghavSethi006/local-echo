@@ -19,6 +19,8 @@ import { generateId, generateKeyPair, generateSigningKeyPair, deriveSharedKey, e
 import * as Storage from './storage';
 import { createDefaultCommunityConfig, getTemplateChannels } from '@/types/community';
 import type { CommunityConfig, CommunityConfigPatch, CreateCommunityInput } from '@/types/community';
+import { YjsManager } from './yjs-manager';
+import type { YjsSyncMessage } from './yjs-manager';
 
 type EventCallback = (event: P2PEvent) => void;
 type ServerUpdatePatch = { name?: string; icon?: string; channelOps?: ChannelOp[]; configPatch?: CommunityConfigPatch };
@@ -33,24 +35,6 @@ interface SyncResponsePayload {
   messages: Record<string, Message[]>;
   sequenceNumber: number;
   onlinePeers: PeerId[];
-}
-
-interface HistoryOfferPayload {
-  channels: Record<string, string[]>;
-  dms: Record<string, string[]>;
-  from: PeerId;
-}
-
-interface HistoryMergePayload {
-  send: {
-    channels: Record<string, Message[]>;
-    dms: Record<string, DirectMessage[]>;
-  };
-  request: {
-    channels: Record<string, string[]>;
-    dms: Record<string, string[]>;
-  };
-  from: PeerId;
 }
 
 interface ChunkFrame {
@@ -82,13 +66,13 @@ export class P2PNetwork {
   private connections: Map<string, PeerEntry> = new Map();
   private servers: Map<string, Server> = new Map();
   private messages: Map<string, Message[]> = new Map();
+  private yjs: YjsManager;
   private eventListeners: Set<EventCallback> = new Set();
   private isHost: boolean = false;
   private hostId: string | null = null;
   private hostConn: DataConnection | null = null;
   private bulkConnections: Map<string, DataConnection> = new Map();
   private bulkHostConn: DataConnection | null = null;
-  private sequenceNumber: number = 0;
   private readonly CHUNK_SIZE = 12_000;
   private chunkBuffers: Map<string, Map<string, Array<string | null>>> = new Map();
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
@@ -106,6 +90,7 @@ export class P2PNetwork {
       id: existingId || generateId(),
       username,
     };
+    this.yjs = new YjsManager(this.localPeer.id);
   }
 
   async initialize(): Promise<void> {
@@ -148,6 +133,10 @@ export class P2PNetwork {
       });
 
       this.heartbeatInterval = setInterval(() => this.sendHeartbeats(), 15_000);
+
+      // Wire Yjs sync to network layer
+      this.yjs.setSyncOutgoingHandler((msg) => this.handleYjsSyncOutgoing(msg));
+      this.yjs.onChange((channelKey) => this.syncCacheFromYjs(channelKey));
     });
   }
 
@@ -192,7 +181,9 @@ export class P2PNetwork {
     this.hostId = this.localPeer.id;
 
     server.channels.forEach(ch => {
-      this.messages.set(`${server.id}:${ch.id}`, []);
+      const key = `${server.id}:${ch.id}`;
+      this.messages.set(key, []);
+      this.yjs.getOrCreateChannelDoc(server.id, ch.id);
     });
 
     console.log('[P2P] Created server:', server.name, '| Host peer ID:', this.localPeer.id);
@@ -221,7 +212,9 @@ export class P2PNetwork {
       if (op.kind === 'add') {
         if (!server.channels.find(c => c.id === op.channel.id)) {
           server.channels.push(op.channel);
-          this.messages.set(`${server.id}:${op.channel.id}`, []);
+          const key = `${server.id}:${op.channel.id}`;
+          this.messages.set(key, []);
+          this.yjs.getOrCreateChannelDoc(server.id, op.channel.id);
         }
       } else if (op.kind === 'rename') {
         const ch = server.channels.find(c => c.id === op.channelId);
@@ -457,12 +450,12 @@ export class P2PNetwork {
             timestamp: Date.now(),
           });
 
-          // History offer goes over bulk if available, else RT
-          if (this.bulkHostConn?.open) {
-            this.sendHistoryOffer(this.bulkHostConn);
-          } else {
-            this.sendHistoryOffer(conn);
-          }
+          // Initiate Yjs sync for each channel
+          server.channels.forEach(ch => {
+            const channelKey = this.yjs.channelKey(server.id, ch.id);
+            this.yjs.getOrCreateChannelDoc(server.id, ch.id);
+            this.yjs.sendSyncStep1(channelKey);
+          });
 
           this.emitEvent({ type: 'peer-joined', payload: hostPeer, timestamp: Date.now() });
           server.inviteCode = inviteCode;
@@ -560,8 +553,24 @@ export class P2PNetwork {
 
       this.emitEvent({ type: 'peer-joined', payload: peerInfo, timestamp: Date.now() });
 
-      // Always send a history offer for cloudless async sync
-      this.sendHistoryOffer(conn);
+      // Initiate Yjs sync for each shared channel
+      if (this.isHost) {
+        this.servers.forEach(server => {
+          if (!server.members.find(m => m.id === peerInfo.id)) return;
+          server.channels.forEach(ch => {
+            const channelKey = this.yjs.channelKey(server.id, ch.id);
+            this.yjs.getOrCreateChannelDoc(server.id, ch.id);
+            const target = this.bulkConnections.get(conn.peer)?.open
+              ? this.bulkConnections.get(conn.peer)!
+              : conn;
+            this.sendToConnection(target, {
+              type: 'yjs-sync',
+              payload: { channelKey, step: 1, data: '' },
+              timestamp: Date.now(),
+            });
+          });
+        });
+      }
     });
   }
 
@@ -678,11 +687,7 @@ export class P2PNetwork {
         break;
       }
       case 'history-offer':
-        this.handleHistoryOffer(fromPeerId, event.payload as HistoryOfferPayload);
-        break;
       case 'history-merge':
-        await this.handleHistoryMerge(event.payload as HistoryMergePayload);
-        break;
       case 'peer-list': {
         const peers = (event.payload as { peers?: PeerId[] }).peers;
         peers?.forEach(p => {
@@ -709,37 +714,79 @@ export class P2PNetwork {
         if (entry) entry.lastSeen = Date.now();
         break;
       }
+      case 'yjs-sync':
+      case 'yjs-update': {
+        this.handleYjsEvent(event, fromPeerId);
+        break;
+      }
     }
   }
 
-  private handleChatMessage(message: Message, fromPeerId: string): void {
+  private handleYjsEvent(event: P2PEvent, fromPeerId: string): void {
+    const payload = event.payload as { channelKey: string; step?: number; data: string };
+    if (!payload?.channelKey || !payload?.data) return;
+    const msg: YjsSyncMessage =
+      event.type === 'yjs-sync'
+        ? (payload.step === 1
+            ? { type: 'yjs-sync-step1', channelKey: payload.channelKey, sv: payload.data }
+            : { type: 'yjs-sync-step2', channelKey: payload.channelKey, update: payload.data })
+        : { type: 'yjs-update', channelKey: payload.channelKey, update: payload.data };
+    this.yjs.handleSyncMessage(msg, fromPeerId);
+  }
+
+  private handleYjsSyncOutgoing(msg: YjsSyncMessage, targetPeerId?: string): void {
+    const payload = msg.type === 'yjs-sync-step1'
+      ? { channelKey: msg.channelKey, step: 1, data: msg.sv }
+      : { channelKey: msg.channelKey, data: msg.type === 'yjs-sync-step2' ? msg.update : msg.update };
+    const baseEvent: P2PEvent = {
+      type: msg.type === 'yjs-update' ? 'yjs-update' : 'yjs-sync',
+      payload,
+      timestamp: Date.now(),
+    };
+
+    if (targetPeerId) {
+      const entry = this.connections.get(targetPeerId);
+      if (entry?.conn?.open) this.sendToConnection(entry.conn, baseEvent);
+      return;
+    }
+
+    // yjs-update broadcasts to all; step1/step2 without target does nothing here
+    if (msg.type === 'yjs-update') {
+      this.broadcast(baseEvent);
+    }
+  }
+
+  private syncCacheFromYjs(channelKey: string): void {
+    if (!channelKey.startsWith('channel:')) return;
+    const parts = channelKey.split(':');
+    if (parts.length < 3) return;
+    const serverId = parts[1];
+    const channelId = parts[2];
+    // Re-read messages from Yjs doc into the display cache
+    this.yjs.getOrCreateChannelDoc(serverId, channelId).then(doc => {
+      if (!doc) return;
+      const msgs = this.yjs.getChannelMessages(doc);
+      msgs.forEach(m => {
+        m.serverId = serverId;
+        m.channelId = channelId;
+      });
+      this.messages.set(`${serverId}:${channelId}`, msgs);
+      // Emit the latest message for UI update
+      const latest = msgs[msgs.length - 1];
+      if (latest) {
+        this.emitEvent({ type: 'message', payload: latest, timestamp: Date.now() });
+      }
+    });
+  }
+
+  private handleChatMessage(message: Message, _fromPeerId: string): void {
     const key = `${message.serverId}:${message.channelId}`;
     const channelMessages = this.messages.get(key) || [];
 
     if (!channelMessages.find(m => m.id === message.id)) {
-      // If host, assign sequence number
-      if (this.isHost && !message.seq) {
-        message.seq = ++this.sequenceNumber;
-      }
-
       channelMessages.push(message);
-      channelMessages.sort((a, b) => {
-        if (a.seq && b.seq) return a.seq - b.seq;
-        return a.timestamp - b.timestamp;
-      });
       this.messages.set(key, channelMessages);
-      this.scheduleSave('messages');
-
       this.emitEvent({ type: 'message', payload: message, timestamp: Date.now() });
-
-      // Host broadcasts to all other peers
-      if (this.isHost) {
-        this.broadcast({
-          type: 'message',
-          payload: message,
-          timestamp: Date.now(),
-        }, fromPeerId);
-      }
     }
   }
 
@@ -755,12 +802,6 @@ export class P2PNetwork {
       }
     }
 
-    // Send full state
-    const allMessages: Record<string, Message[]> = {};
-    this.messages.forEach((msgs, key) => {
-      allMessages[key] = msgs;
-    });
-
     const bulkConn = this.bulkConnections.get(fromPeerId);
     const targetConn = bulkConn?.open ? bulkConn : this.connections.get(fromPeerId)?.conn;
     if (targetConn) {
@@ -772,8 +813,8 @@ export class P2PNetwork {
             void _config;
             return coreServer;
           }),
-          messages: allMessages,
-          sequenceNumber: this.sequenceNumber,
+          messages: {},
+          sequenceNumber: 0,
           onlinePeers: this.getOnlinePeers(),
         },
         timestamp: Date.now(),
@@ -831,36 +872,14 @@ export class P2PNetwork {
       });
     });
 
-    // Merge messages
-    if (payload.messages) {
-      Object.entries(payload.messages).forEach(([key, msgs]) => {
-        const existing = this.messages.get(key) || [];
-        const newMsgs = msgs as Message[];
-        newMsgs.forEach(m => {
-          if (!existing.find(e => e.id === m.id)) {
-            existing.push(m);
-          }
-        });
-        existing.sort((a, b) => {
-          if (a.seq && b.seq) return a.seq - b.seq;
-          return a.timestamp - b.timestamp;
-        });
-        this.messages.set(key, existing);
-      });
-    }
-
-    this.sequenceNumber = Math.max(this.sequenceNumber, payload.sequenceNumber || 0);
-    console.log('[P2P] Synced with host, seq:', this.sequenceNumber);
+    console.log('[P2P] Synced with host');
     this.scheduleSave('servers');
-    await this.persistMessages();
-    
-    // Emit to refresh UI
     this.emitEvent({ type: 'sync-response', payload: null, timestamp: Date.now() });
   }
 
   // ==================== MESSAGING ====================
 
-  sendMessage(serverId: string, channelId: string, content: string): Message {
+  async sendMessage(serverId: string, channelId: string, content: string): Promise<Message> {
     const MAX_MESSAGE_BYTES = 8192;
     if (new TextEncoder().encode(content).byteLength > MAX_MESSAGE_BYTES) {
       throw new Error('Message is too long (max 8KB). Please split it into smaller messages.');
@@ -872,27 +891,18 @@ export class P2PNetwork {
       channelId,
       author: this.localPeer,
       content,
-      seq: this.isHost ? ++this.sequenceNumber : 0,
       timestamp: Date.now(),
     };
 
-    // Store locally
+    // Add to Yjs doc (triggers Yjs update broadcast to peers)
+    const doc = this.yjs.getOrCreateChannelDoc(serverId, channelId);
+    this.yjs.addChannelMessage(doc, message);
+
+    // Update local cache and emit for UI
     const key = `${serverId}:${channelId}`;
     const channelMessages = this.messages.get(key) || [];
     channelMessages.push(message);
     this.messages.set(key, channelMessages);
-    this.scheduleSave('messages');
-
-    // Send
-    if (this.isHost) {
-      this.broadcast({ type: 'message', payload: message, timestamp: Date.now() });
-    } else if (this.hostConn?.open) {
-      this.sendToConnection(this.hostConn, {
-        type: 'message',
-        payload: message,
-        timestamp: Date.now(),
-      });
-    }
 
     this.emitEvent({ type: 'message', payload: message, timestamp: Date.now() });
     return message;
@@ -998,7 +1008,6 @@ export class P2PNetwork {
           });
           this.setupConnectionHandlers(conn, peerId);
           this.setDMConnectionType(peerId, 'direct');
-          this.sendHistoryOffer(conn);
         });
 
         conn.on('error', () => {
@@ -1141,168 +1150,6 @@ export class P2PNetwork {
   // When two peers reconnect after being offline, they exchange message history
   // for any channels/DMs they share, dedupe by message id, and rebuild a unified
   // timeline. This lets messages propagate even when peers were never online together.
-
-  private sendHistoryOffer(conn: DataConnection): void {
-    const channelSummaries: Record<string, string[]> = {};
-    this.messages.forEach((msgs, key) => {
-      if (msgs.length > 0) channelSummaries[key] = msgs.map(m => m.id);
-    });
-
-    const dmSummaries: Record<string, string[]> = {};
-    this.dmConversations.forEach((conv, peerId) => {
-      if (conv.messages.length > 0) dmSummaries[peerId] = conv.messages.map(m => m.id);
-    });
-
-    this.sendToConnection(conn, {
-      type: 'history-offer',
-      payload: { channels: channelSummaries, dms: dmSummaries, from: this.localPeer },
-      timestamp: Date.now(),
-    });
-  }
-
-  private handleHistoryOffer(fromPeerId: string, payload: HistoryOfferPayload): void {
-    const toSend: { channels: Record<string, Message[]>; dms: Record<string, DirectMessage[]> } = {
-      channels: {},
-      dms: {},
-    };
-    const toRequest: { channels: Record<string, string[]>; dms: Record<string, string[]> } = {
-      channels: {},
-      dms: {},
-    };
-
-    const theirChannels: Record<string, string[]> = payload.channels || {};
-    Object.keys(theirChannels).forEach(key => {
-      const ours = this.messages.get(key) || [];
-      const theirIds = new Set(theirChannels[key]);
-      const ourIds = new Set(ours.map(m => m.id));
-      const missingForThem = ours.filter(m => !theirIds.has(m.id));
-      if (missingForThem.length > 0) toSend.channels[key] = missingForThem;
-      const missingForUs = theirChannels[key].filter(id => !ourIds.has(id));
-      if (missingForUs.length > 0) toRequest.channels[key] = missingForUs;
-    });
-
-    // Offer channels we have that they didn't list
-    this.messages.forEach((msgs, key) => {
-      if (!(key in theirChannels) && msgs.length > 0) {
-        toSend.channels[key] = msgs;
-      }
-    });
-
-    // DMs - the conversation between us is keyed by the *other* peer's id on each side
-    const theirDms: Record<string, string[]> = payload.dms || {};
-    const ourDmKey = fromPeerId;
-    const theirDmKey = this.localPeer.id;
-    const ourDm = this.dmConversations.get(ourDmKey);
-    const theirIds = new Set(theirDms[theirDmKey] || []);
-    if (ourDm && ourDm.messages.length > 0) {
-      const missingForThem = ourDm.messages.filter(m => !theirIds.has(m.id));
-      if (missingForThem.length > 0) toSend.dms[theirDmKey] = missingForThem;
-    }
-    const ourIds = new Set((ourDm?.messages || []).map(m => m.id));
-    const missingForUs = (theirDms[theirDmKey] || []).filter(id => !ourIds.has(id));
-    if (missingForUs.length > 0) toRequest.dms[ourDmKey] = missingForUs;
-
-    const bulkConn = this.bulkConnections.get(fromPeerId);
-    const targetConn = bulkConn?.open ? bulkConn : this.connections.get(fromPeerId)?.conn;
-    if (!targetConn) return;
-
-    if (
-      Object.keys(toSend.channels).length > 0 ||
-      Object.keys(toSend.dms).length > 0 ||
-      Object.keys(toRequest.channels).length > 0 ||
-      Object.keys(toRequest.dms).length > 0
-    ) {
-      console.log('[P2P History] Merge with', fromPeerId, '— sending channels:',
-        Object.keys(toSend.channels).length, 'dms:', Object.keys(toSend.dms).length);
-      this.sendToConnection(targetConn, {
-        type: 'history-merge',
-        payload: { send: toSend, request: toRequest, from: this.localPeer },
-        timestamp: Date.now(),
-      });
-    }
-  }
-
-  private async handleHistoryMerge(payload: HistoryMergePayload): Promise<void> {
-    const incoming = payload.send || { channels: {}, dms: {} };
-    let added = 0;
-
-    Object.entries(incoming.channels || {}).forEach(([key, msgs]) => {
-      const existing = this.messages.get(key) || [];
-      const existingIds = new Set(existing.map(m => m.id));
-      (msgs as Message[]).forEach(m => {
-        if (!existingIds.has(m.id)) {
-          existing.push(m);
-          existingIds.add(m.id);
-          added++;
-          if (m.seq && m.seq > this.sequenceNumber) this.sequenceNumber = m.seq;
-        }
-      });
-      existing.sort((a, b) => {
-        if (a.seq && b.seq) return a.seq - b.seq;
-        return a.timestamp - b.timestamp;
-      });
-      this.messages.set(key, existing);
-    });
-
-    Object.entries(incoming.dms || {}).forEach(([_peerKey, msgs]) => {
-      const otherPeer: PeerId = payload.from || { id: _peerKey, username: 'Unknown' };
-      const otherPeerId = otherPeer.id;
-      const conv = this.getOrCreateDMConversation(otherPeer);
-      const existingIds = new Set(conv.messages.map(m => m.id));
-      (msgs as DirectMessage[]).forEach(m => {
-        if (!existingIds.has(m.id)) {
-          conv.messages.push(m);
-          existingIds.add(m.id);
-          added++;
-        }
-      });
-      conv.messages.sort((a, b) => a.timestamp - b.timestamp);
-      conv.lastMessage = conv.messages[conv.messages.length - 1];
-      this.dmConversations.set(otherPeerId, conv);
-    });
-
-    if (added > 0) {
-      console.log('[P2P History] Merged', added, 'new messages from peer history');
-      await this.persistMessages();
-      this.scheduleSave('dms');
-      this.emitEvent({ type: 'sync-response', payload: { merged: added }, timestamp: Date.now() });
-      this.emitEvent({ type: 'dm-message', payload: { merged: added }, timestamp: Date.now() });
-    }
-
-    // Honor the request portion: send back messages they asked for
-    const request = payload.request || { channels: {}, dms: {} };
-    const fromPeerId = payload.from?.id;
-    if (!fromPeerId) return;
-    const bulkConn = this.bulkConnections.get(fromPeerId);
-    const targetConn = bulkConn?.open ? bulkConn : this.connections.get(fromPeerId)?.conn;
-    if (!targetConn) return;
-
-    const replySend: { channels: Record<string, Message[]>; dms: Record<string, DirectMessage[]> } = {
-      channels: {},
-      dms: {},
-    };
-    Object.entries(request.channels || {}).forEach(([key, ids]) => {
-      const ours = this.messages.get(key) || [];
-      const wanted = new Set(ids as string[]);
-      const matches = ours.filter(m => wanted.has(m.id));
-      if (matches.length > 0) replySend.channels[key] = matches;
-    });
-    Object.entries(request.dms || {}).forEach(([_key, ids]) => {
-      const conv = this.dmConversations.get(fromPeerId);
-      if (!conv) return;
-      const wanted = new Set(ids as string[]);
-      const matches = conv.messages.filter(m => wanted.has(m.id));
-      if (matches.length > 0) replySend.dms[this.localPeer.id] = matches;
-    });
-
-    if (Object.keys(replySend.channels).length > 0 || Object.keys(replySend.dms).length > 0) {
-      this.sendToConnection(targetConn, {
-        type: 'history-merge',
-        payload: { send: replySend, request: { channels: {}, dms: {} }, from: this.localPeer },
-        timestamp: Date.now(),
-      });
-    }
-  }
 
   // ==================== UTILITIES ====================
 
@@ -1459,26 +1306,17 @@ export class P2PNetwork {
     return this.messages.get(`${serverId}:${channelId}`) || [];
   }
 
+  getAllMessages(): Message[] {
+    const all: Message[] = [];
+    this.messages.forEach(msgs => all.push(...msgs));
+    return all;
+  }
+
   async loadOlderMessages(serverId: string, channelId: string): Promise<Message[]> {
     const key = `${serverId}:${channelId}`;
-    const current = this.messages.get(key) || [];
-    if (current.length === 0) return [];
-
-    const oldestTimestamp = current[0].timestamp;
-    const older = await Storage.loadMessagesBefore(serverId, channelId, oldestTimestamp, 50);
-    if (older.length === 0) return current;
-
-    const existingIds = new Set(current.map(message => message.id));
-    const merged = [
-      ...older.filter(message => !existingIds.has(message.id)),
-      ...current,
-    ];
-    merged.sort((a, b) => {
-      if (a.seq && b.seq) return a.seq - b.seq;
-      return a.timestamp - b.timestamp;
-    });
-    this.messages.set(key, merged);
-    return merged;
+    const msgs = this.messages.get(key) || [];
+    if (msgs.length === 0) return [];
+    return msgs;
   }
 
   getOnlinePeers(): PeerId[] {
@@ -1526,18 +1364,11 @@ export class P2PNetwork {
     this.servers.clear();
     this.messages.clear();
     this.dmConversations.clear();
+    this.yjs.destroy();
     this.isHost = false;
     this.hostId = null;
     this.hostConn = null;
     this.bulkHostConn = null;
-  }
-
-  private async persistMessages(): Promise<void> {
-    const allMessages: Message[] = [];
-    this.messages.forEach((msgs) => {
-      msgs.forEach(m => allMessages.push(m));
-    });
-    await Storage.saveMessages(allMessages);
   }
 
   // ==================== PERSISTENCE ====================
@@ -1583,25 +1414,14 @@ export class P2PNetwork {
         }
       }
 
-      if (saves.has('messages')) {
-        for (const [key, msgs] of this.messages.entries()) {
-          if (msgs.length > 0) {
-            promises.push(Storage.saveMessages(msgs));
-          }
-        }
-      }
-
       if (saves.has('dms')) {
-        for (const [peerId, conv] of this.dmConversations.entries()) {
+        for (const [_peerId, conv] of this.dmConversations.entries()) {
           promises.push(Storage.saveDMConversation({
             peerId: conv.peerId.id,
             peerUsername: conv.peerId.username,
             peerPublicKey: conv.peerId.publicKey,
             lastSeen: conv.lastSeen,
           }));
-          if (conv.messages.length > 0) {
-            promises.push(Storage.saveDMMessages(conv.messages, this.localPeer.id));
-          }
         }
       }
 
@@ -1668,31 +1488,18 @@ export class P2PNetwork {
         }
       }
 
-      let loadedMessageCount = 0;
+      // Init Yjs docs for each channel (loads from y-indexeddb)
       for (const server of Array.from(this.servers.values())) {
         for (const channel of server.channels) {
           const key = `${server.id}:${channel.id}`;
-          const recentMsgs = await Storage.loadRecentMessages(server.id, channel.id, 100);
-          loadedMessageCount += recentMsgs.length;
-          const existing = this.messages.get(key) || [];
-          recentMsgs.forEach(m => {
-            if (!existing.find(e => e.id === m.id)) existing.push(m);
-          });
-          existing.sort((a, b) => {
-            if (a.seq && b.seq) return a.seq - b.seq;
-            return a.timestamp - b.timestamp;
-          });
-          this.messages.set(key, existing);
-          if (recentMsgs.length > 0) {
-            this.sequenceNumber = Math.max(
-              this.sequenceNumber,
-              ...recentMsgs.map(m => m.seq || 0)
-            );
-          }
+          const doc = await this.yjs.getOrCreateChannelDoc(server.id, channel.id);
+          const msgs = this.yjs.getChannelMessages(doc);
+          msgs.forEach(m => { m.serverId = server.id; m.channelId = channel.id; });
+          this.messages.set(key, msgs);
         }
       }
 
-      // Load DM conversations
+      // Load DM conversations (metadata only — Yjs not used for DMs yet)
       const storedConvs = await Storage.loadDMConversations();
       for (const c of storedConvs) {
         if (!this.dmConversations.has(c.peerId)) {

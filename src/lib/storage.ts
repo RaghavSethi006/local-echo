@@ -392,9 +392,18 @@ export async function clearAllData(): Promise<void> {
   const db = await openDB();
   const stores = ['identity', 'servers', 'messages', 'dmConversations', 'dmMessages'];
   const tx = db.transaction(stores, 'readwrite');
-  stores.forEach(name => tx.objectStore(name).clear());
-  return new Promise((resolve, reject) => {
+  stores.forEach(name => {
+    try { tx.objectStore(name).clear(); } catch { /* store may not exist */ }
+  });
+  await new Promise<void>((resolve, reject) => {
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
+  // Clear y-indexeddb databases (each channel doc gets its own db)
+  const dbs = await indexedDB.databases();
+  for (const dbMeta of dbs) {
+    if (dbMeta.name && dbMeta.name.startsWith('yjs-')) {
+      await indexedDB.deleteDatabase(dbMeta.name);
+    }
+  }
 }
