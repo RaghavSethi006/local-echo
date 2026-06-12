@@ -86,6 +86,8 @@ export class P2PNetwork {
   private isHost: boolean = false;
   private hostId: string | null = null;
   private hostConn: DataConnection | null = null;
+  private bulkConnections: Map<string, DataConnection> = new Map();
+  private bulkHostConn: DataConnection | null = null;
   private sequenceNumber: number = 0;
   private readonly CHUNK_SIZE = 12_000;
   private chunkBuffers: Map<string, Map<string, Array<string | null>>> = new Map();
@@ -402,7 +404,7 @@ export class P2PNetwork {
 
       conn.on('open', () => {
         clearTimeout(timeout);
-        console.log('[P2P] Connected to host:', invite.hostPeerId);
+        console.log('[P2P] Connected to host (RT):', invite.hostPeerId);
 
         this.hostConn = conn;
         this.hostId = invite.hostPeerId;
@@ -415,8 +417,8 @@ export class P2PNetwork {
           lastSeen: Date.now(),
         });
 
-        // Set up data handling
-        this.setupConnectionHandlers(conn, invite.hostPeerId);
+        // Set up data handling on RT channel
+        this.setupConnectionHandlers(conn, invite.hostPeerId, false);
 
         // Create local server representation
         const server: Server = {
@@ -430,21 +432,68 @@ export class P2PNetwork {
 
         this.servers.set(server.id, server);
 
-        // Request sync from host
-        this.sendToConnection(conn, {
-          type: 'sync-request',
-          payload: { peerInfo: this.localPeer },
-          timestamp: Date.now(),
+        // Establish a second DataChannel for bulk traffic (sync, history, config)
+        const bulkConn = this.peer!.connect(invite.hostPeerId, {
+          reliable: true,
+          metadata: {
+            type: 'server-join',
+            channelType: 'bulk',
+            serverId: invite.serverId,
+            peerInfo: this.localPeer,
+          },
         });
 
-        // Also offer our local history (cloudless async sync)
-        this.sendHistoryOffer(conn);
+        let bulkReady = false;
+        let syncSent = false;
 
-        this.emitEvent({ type: 'peer-joined', payload: hostPeer, timestamp: Date.now() });
-        server.inviteCode = inviteCode;
-        this.servers.set(server.id, server);
-        this.scheduleSave('servers');
-        resolve(server);
+        const proceed = () => {
+          if (!bulkReady || syncSent) return;
+          syncSent = true;
+
+          // Request sync from host (over RT — small, needs to go immediately)
+          this.sendToConnection(conn, {
+            type: 'sync-request',
+            payload: { peerInfo: this.localPeer },
+            timestamp: Date.now(),
+          });
+
+          // History offer goes over bulk if available, else RT
+          if (this.bulkHostConn?.open) {
+            this.sendHistoryOffer(this.bulkHostConn);
+          } else {
+            this.sendHistoryOffer(conn);
+          }
+
+          this.emitEvent({ type: 'peer-joined', payload: hostPeer, timestamp: Date.now() });
+          server.inviteCode = inviteCode;
+          this.servers.set(server.id, server);
+          this.scheduleSave('servers');
+          resolve(server);
+        };
+
+        bulkConn.on('open', () => {
+          console.log('[P2P] Connected to host (Bulk):', invite.hostPeerId);
+          this.bulkHostConn = bulkConn;
+          this.bulkConnections.set(invite.hostPeerId, bulkConn);
+          this.setupConnectionHandlers(bulkConn, invite.hostPeerId, true);
+          bulkReady = true;
+          proceed();
+        });
+
+        bulkConn.on('error', (err) => {
+          console.warn('[P2P] Bulk connection failed, proceeding with RT only:', err);
+          bulkReady = true;
+          proceed();
+        });
+
+        // Fallback: if bulk never opens within 5s, proceed with RT only
+        setTimeout(() => {
+          if (!bulkReady) {
+            console.warn('[P2P] Bulk connection timeout, proceeding with RT only');
+            bulkReady = true;
+            proceed();
+          }
+        }, 5000);
       });
 
       conn.on('error', (err) => {
@@ -460,6 +509,15 @@ export class P2PNetwork {
   private handleIncomingConnection(conn: DataConnection): void {
     conn.on('open', () => {
       const metadata = conn.metadata;
+      const channelType = metadata?.channelType;
+
+      if (channelType === 'bulk') {
+        console.log('[P2P] Bulk connection opened from:', conn.peer);
+        this.bulkConnections.set(conn.peer, conn);
+        this.setupConnectionHandlers(conn, conn.peer, true);
+        return;
+      }
+
       const peerInfo: PeerId = metadata?.peerInfo || { id: conn.peer, username: 'Unknown' };
       
       console.log('[P2P] Connection opened from:', peerInfo.username, '(', conn.peer, ')');
@@ -471,7 +529,7 @@ export class P2PNetwork {
         lastSeen: Date.now(),
       });
 
-      this.setupConnectionHandlers(conn, conn.peer);
+      this.setupConnectionHandlers(conn, conn.peer, false);
 
       // Add to all servers as member
       if (this.isHost) {
@@ -507,15 +565,17 @@ export class P2PNetwork {
     });
   }
 
-  private setupConnectionHandlers(conn: DataConnection, remotePeerId: string): void {
+  private setupConnectionHandlers(conn: DataConnection, remotePeerId: string, isBulk: boolean = false): void {
     conn.on('data', async (data: unknown) => {
       try {
         const raw = typeof data === 'string' ? data : JSON.stringify(data);
         const assembled = this.receiveChunk(remotePeerId, raw);
         if (!assembled) return;
 
-        const entry = this.connections.get(remotePeerId);
-        if (entry) entry.lastSeen = Date.now();
+        if (!isBulk) {
+          const entry = this.connections.get(remotePeerId);
+          if (entry) entry.lastSeen = Date.now();
+        }
 
         const event = JSON.parse(assembled) as P2PEvent;
         await this.handleEvent(remotePeerId, event);
@@ -526,6 +586,11 @@ export class P2PNetwork {
 
     conn.on('close', () => {
       this.chunkBuffers.delete(remotePeerId);
+      if (isBulk) {
+        console.log('[P2P] Bulk connection closed:', remotePeerId);
+        this.bulkConnections.delete(remotePeerId);
+        return;
+      }
       console.log('[P2P] Connection closed:', remotePeerId);
       const entry = this.connections.get(remotePeerId);
       if (entry) {
@@ -696,9 +761,10 @@ export class P2PNetwork {
       allMessages[key] = msgs;
     });
 
-    const entry = this.connections.get(fromPeerId);
-    if (entry) {
-      this.sendToConnection(entry.conn, {
+    const bulkConn = this.bulkConnections.get(fromPeerId);
+    const targetConn = bulkConn?.open ? bulkConn : this.connections.get(fromPeerId)?.conn;
+    if (targetConn) {
+      this.sendToConnection(targetConn, {
         type: 'sync-response',
         payload: {
           servers: Array.from(this.servers.values()).map(s => {
@@ -715,7 +781,7 @@ export class P2PNetwork {
       // Send config separately to keep sync-response under DataChannel size limits
       Array.from(this.servers.values()).forEach(server => {
         if (!server.config) return;
-        this.sendToConnection(entry.conn, {
+        this.sendToConnection(targetConn, {
           type: 'config-sync',
           payload: { serverId: server.id, config: server.config },
           timestamp: Date.now(),
@@ -847,6 +913,7 @@ export class P2PNetwork {
       this.isHost = true;
       this.hostId = this.localPeer.id;
       this.hostConn = null;
+      this.bulkHostConn = null;
 
       this.servers.forEach(server => {
         server.hostId = this.localPeer.id;
@@ -863,6 +930,7 @@ export class P2PNetwork {
       if (entry) {
         this.hostConn = entry.conn;
       }
+      this.bulkHostConn = this.bulkConnections.get(newHostId) || null;
     }
 
     this.emitEvent({
@@ -1134,8 +1202,9 @@ export class P2PNetwork {
     const missingForUs = (theirDms[theirDmKey] || []).filter(id => !ourIds.has(id));
     if (missingForUs.length > 0) toRequest.dms[ourDmKey] = missingForUs;
 
-    const conn = this.connections.get(fromPeerId)?.conn;
-    if (!conn) return;
+    const bulkConn = this.bulkConnections.get(fromPeerId);
+    const targetConn = bulkConn?.open ? bulkConn : this.connections.get(fromPeerId)?.conn;
+    if (!targetConn) return;
 
     if (
       Object.keys(toSend.channels).length > 0 ||
@@ -1145,7 +1214,7 @@ export class P2PNetwork {
     ) {
       console.log('[P2P History] Merge with', fromPeerId, '— sending channels:',
         Object.keys(toSend.channels).length, 'dms:', Object.keys(toSend.dms).length);
-      this.sendToConnection(conn, {
+      this.sendToConnection(targetConn, {
         type: 'history-merge',
         payload: { send: toSend, request: toRequest, from: this.localPeer },
         timestamp: Date.now(),
@@ -1204,8 +1273,9 @@ export class P2PNetwork {
     const request = payload.request || { channels: {}, dms: {} };
     const fromPeerId = payload.from?.id;
     if (!fromPeerId) return;
-    const conn = this.connections.get(fromPeerId)?.conn;
-    if (!conn) return;
+    const bulkConn = this.bulkConnections.get(fromPeerId);
+    const targetConn = bulkConn?.open ? bulkConn : this.connections.get(fromPeerId)?.conn;
+    if (!targetConn) return;
 
     const replySend: { channels: Record<string, Message[]>; dms: Record<string, DirectMessage[]> } = {
       channels: {},
@@ -1226,7 +1296,7 @@ export class P2PNetwork {
     });
 
     if (Object.keys(replySend.channels).length > 0 || Object.keys(replySend.dms).length > 0) {
-      this.sendToConnection(conn, {
+      this.sendToConnection(targetConn, {
         type: 'history-merge',
         payload: { send: replySend, request: { channels: {}, dms: {} }, from: this.localPeer },
         timestamp: Date.now(),
@@ -1446,6 +1516,10 @@ export class P2PNetwork {
       entry.conn?.close();
     });
     this.connections.clear();
+    this.bulkConnections.forEach(conn => {
+      conn?.close();
+    });
+    this.bulkConnections.clear();
     this.chunkBuffers.clear();
     this.peer?.destroy();
     this.peer = null;
@@ -1455,6 +1529,7 @@ export class P2PNetwork {
     this.isHost = false;
     this.hostId = null;
     this.hostConn = null;
+    this.bulkHostConn = null;
   }
 
   private async persistMessages(): Promise<void> {
