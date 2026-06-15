@@ -1,12 +1,13 @@
-import { useState } from 'react';
+import { useState, lazy, Suspense } from 'react';
 import { useP2P } from '@/contexts/P2PContext';
 import { cn } from '@/lib/utils';
 import { Hash, Volume2, ChevronDown, Settings, UserPlus, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { toast } from 'sonner';
-import { ServerSettingsDialog } from './ServerSettingsDialog';
-import { SearchDialog } from './SearchDialog';
+
+const ServerSettingsDialog = lazy(() => import('./ServerSettingsDialog').then(m => ({ default: m.ServerSettingsDialog })));
+const SearchDialog = lazy(() => import('./SearchDialog').then(m => ({ default: m.SearchDialog })));
 
 export function ChannelSidebar() {
   const { currentServer, currentChannel, selectChannel, generateInvite, isCurrentServerHost, localPeer } = useP2P();
@@ -160,8 +161,10 @@ export function ChannelSidebar() {
         </div>
       </div>
 
-      <ServerSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
-      <SearchDialog open={searchOpen} onOpenChange={setSearchOpen} />
+      <Suspense fallback={null}>
+        <ServerSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+        <SearchDialog open={searchOpen} onOpenChange={setSearchOpen} />
+      </Suspense>
     </aside>
   );
 }

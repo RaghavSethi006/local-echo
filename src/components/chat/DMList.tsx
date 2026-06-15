@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useState, lazy, Suspense } from 'react';
 import { useP2P } from '@/contexts/P2PContext';
 import { cn } from '@/lib/utils';
 import { Plus, Search, Settings, MessageCircle, Wifi, Radio } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { NewDMDialog } from './NewDMDialog';
+
+const NewDMDialog = lazy(() => import('./NewDMDialog').then(m => ({ default: m.NewDMDialog })));
 
 export function DMList() {
   const { dmConversations, currentDMPeer, openDM, localPeer, onlinePeers } = useP2P();
@@ -194,7 +195,9 @@ export function DMList() {
         </button>
       </div>
 
-      <NewDMDialog open={showNewDMDialog} onOpenChange={setShowNewDMDialog} />
+      <Suspense fallback={null}>
+        <NewDMDialog open={showNewDMDialog} onOpenChange={setShowNewDMDialog} />
+      </Suspense>
     </aside>
   );
 }

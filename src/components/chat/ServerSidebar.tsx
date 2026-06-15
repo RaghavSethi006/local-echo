@@ -1,11 +1,12 @@
-import { useState } from 'react';
+import { useState, lazy, Suspense } from 'react';
 import { useP2P } from '@/contexts/P2PContext';
 import { cn } from '@/lib/utils';
 import { Plus, Hash, Settings, Wifi, WifiOff, MessageCircle } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { CreateServerDialog } from './CreateServerDialog';
-import { JoinServerDialog } from './JoinServerDialog';
-import { SettingsDialog } from './SettingsDialog';
+
+const CreateServerDialog = lazy(() => import('./CreateServerDialog').then(m => ({ default: m.CreateServerDialog })));
+const JoinServerDialog = lazy(() => import('./JoinServerDialog').then(m => ({ default: m.JoinServerDialog })));
+const SettingsDialog = lazy(() => import('./SettingsDialog').then(m => ({ default: m.SettingsDialog })));
 
 export function ServerSidebar() {
   const { servers, currentServer, selectServer, connectionStatus, viewMode, setViewMode, dmConversations } = useP2P();
@@ -168,9 +169,11 @@ export function ServerSidebar() {
         </TooltipContent>
       </Tooltip>
 
-      <CreateServerDialog open={showCreateDialog} onOpenChange={setShowCreateDialog} />
-      <JoinServerDialog open={showJoinDialog} onOpenChange={setShowJoinDialog} />
-      <SettingsDialog open={showSettingsDialog} onOpenChange={setShowSettingsDialog} />
+      <Suspense fallback={null}>
+        <CreateServerDialog open={showCreateDialog} onOpenChange={setShowCreateDialog} />
+        <JoinServerDialog open={showJoinDialog} onOpenChange={setShowJoinDialog} />
+        <SettingsDialog open={showSettingsDialog} onOpenChange={setShowSettingsDialog} />
+      </Suspense>
     </aside>
   );
 }
