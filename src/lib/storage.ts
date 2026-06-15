@@ -404,10 +404,15 @@ export async function clearAllData(): Promise<void> {
     tx.onerror = () => reject(tx.error);
   });
   // Clear y-indexeddb databases (each channel doc gets its own db)
-  const dbs = await indexedDB.databases();
-  for (const dbMeta of dbs) {
-    if (dbMeta.name && dbMeta.name.startsWith('yjs-')) {
-      await indexedDB.deleteDatabase(dbMeta.name);
+  // Note: indexedDB.databases() is not supported in all browsers (e.g. Safari)
+  try {
+    const dbs = await indexedDB.databases();
+    for (const dbMeta of dbs) {
+      if (dbMeta.name && dbMeta.name.startsWith('yjs-')) {
+        await indexedDB.deleteDatabase(dbMeta.name);
+      }
     }
+  } catch {
+    // Fallback: can't enumerate databases, skip cleanup
   }
 }

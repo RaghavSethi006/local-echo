@@ -9,7 +9,7 @@ import { ServerSettingsDialog } from './ServerSettingsDialog';
 import { SearchDialog } from './SearchDialog';
 
 export function ChannelSidebar() {
-  const { currentServer, currentChannel, selectChannel, generateInvite, onlinePeers, isCurrentServerHost, localPeer } = useP2P();
+  const { currentServer, currentChannel, selectChannel, generateInvite, isCurrentServerHost, localPeer } = useP2P();
   const [textChannelsOpen, setTextChannelsOpen] = useState(true);
   const [voiceChannelsOpen, setVoiceChannelsOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -35,7 +35,7 @@ export function ChannelSidebar() {
       const invite = await generateInvite();
       await navigator.clipboard.writeText(invite);
       toast.success('Invite code copied to clipboard');
-    } catch (error) {
+    } catch {
       toast.error('Failed to generate invite');
     }
   };

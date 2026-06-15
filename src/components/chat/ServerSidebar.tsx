@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useP2P } from '@/contexts/P2PContext';
 import { cn } from '@/lib/utils';
-import { Plus, Hash, Settings, Wifi, WifiOff, MessageCircle, Users } from 'lucide-react';
+import { Plus, Hash, Settings, Wifi, WifiOff, MessageCircle } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { CreateServerDialog } from './CreateServerDialog';
 import { JoinServerDialog } from './JoinServerDialog';

@@ -22,7 +22,7 @@ export function UsernameSetup() {
     try {
       await initialize(username.trim());
       toast.success('Welcome to Local Echo!');
-    } catch (error) {
+    } catch {
       toast.error('Failed to initialize. Please try again.');
     } finally {
       setIsInitializing(false);
@@ -34,7 +34,7 @@ export function UsernameSetup() {
     try {
       await restoreSession();
       toast.success('Session restored! Your chats are back.');
-    } catch (error) {
+    } catch {
       toast.error('Failed to restore session. Please create a new one.');
     } finally {
       setIsRestoring(false);

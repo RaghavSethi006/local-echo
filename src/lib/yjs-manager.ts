@@ -1,6 +1,6 @@
 import * as Y from 'yjs';
 import { IndexeddbPersistence } from 'y-indexeddb';
-import type { Message, DirectMessage, PeerId } from '@/types/p2p';
+import type { Message, DirectMessage } from '@/types/p2p';
 
 export type YjsSyncMessage =
   | { type: 'yjs-sync-step1'; channelKey: string; sv: string; targetPeerId?: string }

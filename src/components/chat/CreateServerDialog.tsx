@@ -77,7 +77,7 @@ export function CreateServerDialog({ open, onOpenChange }: CreateServerDialogPro
       setTags('');
       setBannerUrl('');
       onOpenChange(false);
-    } catch (error) {
+    } catch {
       toast.error('Failed to create server');
     } finally {
       setIsCreating(false);

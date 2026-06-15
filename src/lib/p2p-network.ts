@@ -7,8 +7,7 @@ import {
   PeerId, 
   Message, 
   Server, 
-  Channel, 
-  PeerConnection, 
+
   P2PEvent, 
   ConnectionStatus,
   DirectMessage,
@@ -331,10 +330,10 @@ export class P2PNetwork {
     // Drop messages for all channels
     for (const ch of server.channels) {
       this.messages.delete(`${serverId}:${ch.id}`);
-      try { await Storage.deleteChannelMessages(serverId, ch.id); } catch {}
+      try { await Storage.deleteChannelMessages(serverId, ch.id); } catch { /* storage may already be cleared */ }
     }
     this.servers.delete(serverId);
-    try { await Storage.deleteServer(serverId); } catch {}
+    try { await Storage.deleteServer(serverId); } catch { /* storage may already be cleared */ }
     // Optionally close the host conn if we joined this server
     this.emitEvent({
       type: 'server-deleted',
@@ -1085,7 +1084,7 @@ export class P2PNetwork {
     return localDm;
   }
 
-  private async handleDMMessage(dm: DirectMessage, fromPeerId: string): Promise<void> {
+  private async handleDMMessage(dm: DirectMessage, _fromPeerId: string): Promise<void> {
     // Host relay logic - forward without inspecting content
     if (this.isHost && dm._relayTo && dm._relayTo !== this.localPeer.id) {
       const target = this.connections.get(dm._relayTo);

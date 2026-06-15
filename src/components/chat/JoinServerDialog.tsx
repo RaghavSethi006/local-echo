@@ -35,7 +35,7 @@ export function JoinServerDialog({ open, onOpenChange }: JoinServerDialogProps) 
       toast.success('Joined server successfully!');
       setInviteCode('');
       onOpenChange(false);
-    } catch (error) {
+    } catch {
       toast.error('Failed to join server. Invalid invite code.');
     } finally {
       setIsJoining(false);

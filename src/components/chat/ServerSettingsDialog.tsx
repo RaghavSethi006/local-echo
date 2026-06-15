@@ -29,7 +29,6 @@ import {
   Plus,
   ShieldAlert,
   SlidersHorizontal,
-  Sparkles,
   Trash2,
   UserCog,
   Workflow,
@@ -43,7 +42,7 @@ import {
   type AutoModRule,
   type AutomationWorkflow,
   type CommunityConfig,
-  type CommunityRole,
+
   type ModerationSettings,
   type PermissionFlag,
   type ServerVisibility,

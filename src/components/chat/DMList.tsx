@@ -4,7 +4,6 @@ import { cn } from '@/lib/utils';
 import { Plus, Search, Settings, MessageCircle, Wifi, Radio } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { NewDMDialog } from './NewDMDialog';
-import { PeerId } from '@/types/p2p';
 
 export function DMList() {
   const { dmConversations, currentDMPeer, openDM, localPeer, onlinePeers } = useP2P();
