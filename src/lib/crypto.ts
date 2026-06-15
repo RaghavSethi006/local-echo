@@ -13,7 +13,7 @@ export async function generateKeyPair(): Promise<KeyPair> {
       namedCurve: 'P-256',
     },
     true,
-    ['deriveKey']
+    ['deriveKey', 'deriveBits']
   );
 
   const publicKeyBuffer = await window.crypto.subtle.exportKey('raw', keyPair.publicKey);
@@ -60,20 +60,39 @@ export async function importPublicKey(publicKeyString: string): Promise<CryptoKe
   );
 }
 
+const HKDF_SALT = new Uint8Array(32);
+const HKDF_INFO = new TextEncoder().encode('local-echo-key-v1');
+
 export async function deriveSharedKey(
   privateKey: CryptoKey,
   publicKey: CryptoKey
 ): Promise<CryptoKey> {
+  // Step 1: Compute raw ECDH shared secret
+  const sharedBits = await window.crypto.subtle.deriveBits(
+    { name: 'ECDH', public: publicKey },
+    privateKey,
+    256
+  );
+
+  // Step 2: Import as HKDF key material
+  const hkdfKey = await window.crypto.subtle.importKey(
+    'raw',
+    sharedBits,
+    { name: 'HKDF' },
+    false,
+    ['deriveKey']
+  );
+
+  // Step 3: Derive AES-256-GCM key via HKDF-SHA256 (NIST SP 800-56C)
   return window.crypto.subtle.deriveKey(
     {
-      name: 'ECDH',
-      public: publicKey,
+      name: 'HKDF',
+      hash: 'SHA-256',
+      salt: HKDF_SALT,
+      info: HKDF_INFO,
     },
-    privateKey,
-    {
-      name: 'AES-GCM',
-      length: 256,
-    },
+    hkdfKey,
+    { name: 'AES-GCM', length: 256 },
     true,
     ['encrypt', 'decrypt']
   );
