@@ -57,6 +57,13 @@ interface PeerEntry {
   lastSeen: number;
 }
 
+export interface P2PNetworkOptions {
+  signalingHost?: string;
+  signalingPort?: number;
+  signalingSecure?: boolean;
+  signalingPath?: string;
+}
+
 export class P2PNetwork {
   private localPeer: PeerId;
   private keyPair: KeyPair | null = null;
@@ -86,11 +93,19 @@ export class P2PNetwork {
   private pendingSaves: Set<string> = new Set();
   private saveDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
-  constructor(username: string, existingId?: string) {
+  // Options
+  private options: P2PNetworkOptions;
+
+  // Reconnection state
+  private reconnectAttempts = 0;
+  private readonly MAX_RECONNECT_ATTEMPTS = 10;
+
+  constructor(username: string, existingId?: string, options: P2PNetworkOptions = {}) {
     this.localPeer = {
       id: existingId || generateId(),
       username,
     };
+    this.options = options;
     this.yjs = new YjsManager(this.localPeer.id);
   }
 
@@ -106,14 +121,26 @@ export class P2PNetwork {
 
     return new Promise((resolve, reject) => {
       // Use the local peer id as PeerJS id for addressability
-      this.peer = new Peer(this.localPeer.id, {
-        debug: 1,
-      });
+      const peerOptions: Record<string, unknown> = { debug: 1 };
+      if (this.options.signalingHost) {
+        peerOptions.host = this.options.signalingHost;
+      }
+      if (this.options.signalingPort !== undefined) {
+        peerOptions.port = this.options.signalingPort;
+      }
+      if (this.options.signalingSecure !== undefined) {
+        peerOptions.secure = this.options.signalingSecure;
+      }
+      if (this.options.signalingPath) {
+        peerOptions.path = this.options.signalingPath;
+      }
+      this.peer = new Peer(this.localPeer.id, peerOptions);
 
       const timeout = setTimeout(() => reject(new Error('PeerJS initialization timeout')), 15000);
 
       this.peer.on('open', (id) => {
         clearTimeout(timeout);
+        this.reconnectAttempts = 0;
         logger.log('[P2P] PeerJS ready with ID:', id);
         resolve();
       });
@@ -125,12 +152,19 @@ export class P2PNetwork {
 
       this.peer.on('error', (err) => {
         logger.error('[P2P] PeerJS error:', err);
-        // Don't reject after initial open
       });
 
       this.peer.on('disconnected', () => {
-        logger.log('[P2P] Disconnected from signaling server, attempting reconnect...');
-        this.peer?.reconnect();
+        const delay = Math.min(1000 * 2 ** this.reconnectAttempts, 30000);
+        if (this.reconnectAttempts < this.MAX_RECONNECT_ATTEMPTS) {
+          logger.log(`[P2P] Disconnected, reconnecting in ${delay}ms (attempt ${this.reconnectAttempts + 1}/${this.MAX_RECONNECT_ATTEMPTS})...`);
+          setTimeout(() => {
+            this.reconnectAttempts++;
+            this.peer?.reconnect();
+          }, delay);
+        } else {
+          logger.error('[P2P] Max reconnection attempts reached');
+        }
       });
 
       this.heartbeatInterval = setInterval(() => this.sendHeartbeats(), 15_000);

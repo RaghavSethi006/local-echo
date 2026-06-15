@@ -250,7 +250,12 @@ export function P2PProvider({ children }: { children: ReactNode }) {
   }, [network, handleEvent]);
 
   const initializeNetwork = useCallback(async (username: string, existingId?: string) => {
-    const net = new P2PNetwork(username, existingId);
+    const net = new P2PNetwork(username, existingId, {
+      signalingHost: import.meta.env.VITE_PEERJS_HOST as string | undefined,
+      signalingPort: import.meta.env.VITE_PEERJS_PORT ? Number(import.meta.env.VITE_PEERJS_PORT) : undefined,
+      signalingSecure: import.meta.env.VITE_PEERJS_SECURE === 'true' ? true : undefined,
+      signalingPath: import.meta.env.VITE_PEERJS_PATH as string | undefined,
+    });
     await net.initialize();
     
     // Load persisted data
