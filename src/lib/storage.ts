@@ -174,7 +174,7 @@ export async function deleteChannelMessages(serverId: string, channelId: string)
   const tx = db.transaction('messages', 'readwrite');
   const store = tx.objectStore('messages');
   const idx = store.index('channel');
-  const req = idx.openCursor(IDBKeyRange.only([serverId, channelId]));
+  const req = idx.openCursor([serverId, channelId]);
   return new Promise((resolve, reject) => {
     req.onsuccess = () => {
       const cursor = req.result;
@@ -318,17 +318,21 @@ export async function loadDMConversations(): Promise<StoredDMConversation[]> {
 
 export async function saveDMMessages(messages: DirectMessage[], localPeerId: string): Promise<void> {
   if (messages.length === 0) return;
-  const db = await openDB();
-  const tx = db.transaction('dmMessages', 'readwrite');
-  const store = tx.objectStore('dmMessages');
+  const records: Record<string, unknown>[] = [];
   for (const msg of messages) {
     const otherPeerId = msg.from.id === localPeerId ? msg.to.id : msg.from.id;
-    let stored: Record<string, unknown> = { ...msg, peerId: otherPeerId };
+    const stored: Record<string, unknown> = { ...msg, peerId: otherPeerId };
     if (_storageKey && msg.content && !msg.encrypted) {
       stored.content = await encrypt(msg.content, _storageKey);
       stored.encrypted = true;
     }
-    store.put(stored);
+    records.push(stored);
+  }
+  const db = await openDB();
+  const tx = db.transaction('dmMessages', 'readwrite');
+  const store = tx.objectStore('dmMessages');
+  for (const record of records) {
+    store.put(record);
   }
   return new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve();
