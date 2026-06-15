@@ -194,6 +194,9 @@ export class YjsManager {
         Y.applyUpdate(entry.doc, update, 'remote');
         const kind = msg.channelKey.startsWith('dm:') ? 'dm' : 'message';
         this.notifyChange(msg.channelKey, kind);
+        if (fromPeerId) {
+          this._syncingPeers.delete(`${msg.channelKey}:${fromPeerId}`);
+        }
         break;
       }
     }

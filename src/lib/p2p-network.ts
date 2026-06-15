@@ -19,6 +19,7 @@ import { generateId, generateKeyPair, generateSigningKeyPair, deriveSharedKey, e
 import * as Storage from './storage';
 import { createDefaultCommunityConfig, getTemplateChannels } from '@/types/community';
 import type { CommunityConfig, CommunityConfigPatch, CreateCommunityInput } from '@/types/community';
+import { logger } from './logger';
 import { YjsManager } from './yjs-manager';
 import type { YjsSyncMessage } from './yjs-manager';
 
@@ -113,22 +114,22 @@ export class P2PNetwork {
 
       this.peer.on('open', (id) => {
         clearTimeout(timeout);
-        console.log('[P2P] PeerJS ready with ID:', id);
+        logger.log('[P2P] PeerJS ready with ID:', id);
         resolve();
       });
 
       this.peer.on('connection', (conn) => {
-        console.log('[P2P] Incoming connection from:', conn.peer);
+        logger.log('[P2P] Incoming connection from:', conn.peer);
         this.handleIncomingConnection(conn);
       });
 
       this.peer.on('error', (err) => {
-        console.error('[P2P] PeerJS error:', err);
+        logger.error('[P2P] PeerJS error:', err);
         // Don't reject after initial open
       });
 
       this.peer.on('disconnected', () => {
-        console.log('[P2P] Disconnected from signaling server, attempting reconnect...');
+        logger.log('[P2P] Disconnected from signaling server, attempting reconnect...');
         this.peer?.reconnect();
       });
 
@@ -186,7 +187,7 @@ export class P2PNetwork {
       this.yjs.getOrCreateChannelDoc(server.id, ch.id);
     });
 
-    console.log('[P2P] Created server:', server.name, '| Host peer ID:', this.localPeer.id);
+    logger.log('[P2P] Created server:', server.name, '| Host peer ID:', this.localPeer.id);
     this.scheduleSave('servers');
     return server;
   }
@@ -373,7 +374,7 @@ export class P2PNetwork {
         throw new Error('Invite code has an invalid signature — it may have been tampered with.');
       }
     }
-    console.log('[P2P] Joining server:', invite.serverName, 'via host:', invite.hostPeerId);
+    logger.log('[P2P] Joining server:', invite.serverName, 'via host:', invite.hostPeerId);
 
     if (!this.peer) throw new Error('Not initialized');
 
@@ -397,7 +398,7 @@ export class P2PNetwork {
 
       conn.on('open', () => {
         clearTimeout(timeout);
-        console.log('[P2P] Connected to host (RT):', invite.hostPeerId);
+        logger.log('[P2P] Connected to host (RT):', invite.hostPeerId);
 
         this.hostConn = conn;
         this.hostId = invite.hostPeerId;
@@ -465,7 +466,7 @@ export class P2PNetwork {
         };
 
         bulkConn.on('open', () => {
-          console.log('[P2P] Connected to host (Bulk):', invite.hostPeerId);
+          logger.log('[P2P] Connected to host (Bulk):', invite.hostPeerId);
           this.bulkHostConn = bulkConn;
           this.bulkConnections.set(invite.hostPeerId, bulkConn);
           this.setupConnectionHandlers(bulkConn, invite.hostPeerId, true);
@@ -474,7 +475,7 @@ export class P2PNetwork {
         });
 
         bulkConn.on('error', (err) => {
-          console.warn('[P2P] Bulk connection failed, proceeding with RT only:', err);
+          logger.warn('[P2P] Bulk connection failed, proceeding with RT only:', err);
           bulkReady = true;
           proceed();
         });
@@ -482,7 +483,7 @@ export class P2PNetwork {
         // Fallback: if bulk never opens within 5s, proceed with RT only
         setTimeout(() => {
           if (!bulkReady) {
-            console.warn('[P2P] Bulk connection timeout, proceeding with RT only');
+            logger.warn('[P2P] Bulk connection timeout, proceeding with RT only');
             bulkReady = true;
             proceed();
           }
@@ -491,7 +492,7 @@ export class P2PNetwork {
 
       conn.on('error', (err) => {
         clearTimeout(timeout);
-        console.error('[P2P] Connection error:', err);
+        logger.error('[P2P] Connection error:', err);
         reject(err);
       });
     });
@@ -505,7 +506,7 @@ export class P2PNetwork {
       const channelType = metadata?.channelType;
 
       if (channelType === 'bulk') {
-        console.log('[P2P] Bulk connection opened from:', conn.peer);
+        logger.log('[P2P] Bulk connection opened from:', conn.peer);
         this.bulkConnections.set(conn.peer, conn);
         this.setupConnectionHandlers(conn, conn.peer, true);
         return;
@@ -513,7 +514,7 @@ export class P2PNetwork {
 
       const peerInfo: PeerId = metadata?.peerInfo || { id: conn.peer, username: 'Unknown' };
       
-      console.log('[P2P] Connection opened from:', peerInfo.username, '(', conn.peer, ')');
+      logger.log('[P2P] Connection opened from:', peerInfo.username, '(', conn.peer, ')');
 
       this.connections.set(conn.peer, {
         peerId: peerInfo,
@@ -589,18 +590,18 @@ export class P2PNetwork {
         const event = JSON.parse(assembled) as P2PEvent;
         await this.handleEvent(remotePeerId, event);
       } catch (err) {
-        console.error('[P2P] Error handling data:', err);
+        logger.error('[P2P] Error handling data:', err);
       }
     });
 
     conn.on('close', () => {
       this.chunkBuffers.delete(remotePeerId);
       if (isBulk) {
-        console.log('[P2P] Bulk connection closed:', remotePeerId);
+        logger.log('[P2P] Bulk connection closed:', remotePeerId);
         this.bulkConnections.delete(remotePeerId);
         return;
       }
-      console.log('[P2P] Connection closed:', remotePeerId);
+      logger.log('[P2P] Connection closed:', remotePeerId);
       const entry = this.connections.get(remotePeerId);
       if (entry) {
         entry.status = 'offline';
@@ -615,14 +616,14 @@ export class P2PNetwork {
     });
 
     conn.on('error', (err) => {
-      console.error('[P2P] Connection error with', remotePeerId, ':', err);
+      logger.error('[P2P] Connection error with', remotePeerId, ':', err);
     });
   }
 
   // ==================== EVENT HANDLING ====================
 
   private async handleEvent(fromPeerId: string, event: P2PEvent): Promise<void> {
-    console.log('[P2P] Event from', fromPeerId, ':', event.type);
+    logger.log('[P2P] Event from', fromPeerId, ':', event.type);
 
     switch (event.type) {
       case 'message':
@@ -737,7 +738,7 @@ export class P2PNetwork {
   private handleYjsSyncOutgoing(msg: YjsSyncMessage, targetPeerId?: string): void {
     const payload = msg.type === 'yjs-sync-step1'
       ? { channelKey: msg.channelKey, step: 1, data: msg.sv }
-      : { channelKey: msg.channelKey, data: msg.type === 'yjs-sync-step2' ? msg.update : msg.update };
+      : { channelKey: msg.channelKey, data: msg.update };
     const baseEvent: P2PEvent = {
       type: msg.type === 'yjs-update' ? 'yjs-update' : 'yjs-sync',
       payload,
@@ -872,7 +873,7 @@ export class P2PNetwork {
       });
     });
 
-    console.log('[P2P] Synced with host');
+    logger.log('[P2P] Synced with host');
     this.scheduleSave('servers');
     this.emitEvent({ type: 'sync-response', payload: null, timestamp: Date.now() });
   }
@@ -917,7 +918,7 @@ export class P2PNetwork {
     candidates.sort();
     const newHostId = candidates[0];
 
-    console.log('[P2P] Host migration → new host:', newHostId);
+    logger.log('[P2P] Host migration → new host:', newHostId);
 
     if (newHostId === this.localPeer.id) {
       this.isHost = true;
@@ -999,7 +1000,7 @@ export class P2PNetwork {
         });
 
         conn.on('open', () => {
-          console.log('[P2P DM] Direct connection to:', peerId);
+          logger.log('[P2P DM] Direct connection to:', peerId);
           this.connections.set(peerId, {
             peerId: this.findPeerById(peerId) || { id: peerId, username: 'Unknown' },
             conn,
@@ -1011,7 +1012,7 @@ export class P2PNetwork {
         });
 
         conn.on('error', () => {
-          console.log('[P2P DM] Direct connection failed, using relay');
+          logger.log('[P2P DM] Direct connection failed, using relay');
           this.setDMConnectionType(peerId, 'relay');
         });
       } catch {
@@ -1268,7 +1269,7 @@ export class P2PNetwork {
     this.connections.forEach((entry, peerId) => {
       if (!entry.conn.open) return;
       if (now - entry.lastSeen > 45_000) {
-        console.warn('[P2P] Peer', peerId, 'is stale - reconnecting');
+        logger.warn('[P2P] Peer', peerId, 'is stale - reconnecting');
         entry.conn.close();
         return;
       }
@@ -1345,7 +1346,8 @@ export class P2PNetwork {
     return this.dmConversations.get(peerId)?.messages || [];
   }
 
-  disconnect(): void {
+  async disconnect(): Promise<void> {
+    await this.flushSaves();
     if (this.heartbeatInterval) {
       clearInterval(this.heartbeatInterval);
       this.heartbeatInterval = null;
@@ -1364,7 +1366,7 @@ export class P2PNetwork {
     this.servers.clear();
     this.messages.clear();
     this.dmConversations.clear();
-    this.yjs.destroy();
+    await this.yjs.destroy();
     this.isHost = false;
     this.hostId = null;
     this.hostConn = null;
@@ -1427,7 +1429,7 @@ export class P2PNetwork {
 
       await Promise.all(promises);
     } catch (err) {
-      console.error('[P2P] Persistence error:', err);
+      logger.error('[P2P] Persistence error:', err);
     }
   }
 
@@ -1483,7 +1485,7 @@ export class P2PNetwork {
           try {
             await this.joinServer(server.inviteCode);
           } catch {
-            console.log('[P2P] Could not reconnect to server', server.name, '— host is offline');
+            logger.log('[P2P] Could not reconnect to server', server.name, '— host is offline');
           }
         }
       }
@@ -1516,10 +1518,12 @@ export class P2PNetwork {
         }
       }
 
+      const loadedMessageCount = Array.from(this.messages.values()).reduce((sum, msgs) => sum + msgs.length, 0)
+        + Array.from(this.dmConversations.values()).reduce((sum, conv) => sum + conv.messages.length, 0);
       this.persistenceReady = true;
-      console.log('[P2P] Loaded persisted data:', storedServers.length, 'servers,', loadedMessageCount, 'recent messages,', storedConvs.length, 'DM conversations');
+      logger.log('[P2P] Loaded persisted data:', storedServers.length, 'servers,', loadedMessageCount, 'recent messages,', storedConvs.length, 'DM conversations');
     } catch (err) {
-      console.error('[P2P] Error loading persisted data:', err);
+      logger.error('[P2P] Error loading persisted data:', err);
       this.persistenceReady = true;
     }
   }

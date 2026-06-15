@@ -3,6 +3,7 @@ import { P2PNetwork } from '@/lib/p2p-network';
 import { Server, Channel, Message, PeerId, P2PEvent, ConnectionStatus, ViewMode, DMConversation, DirectMessage, ChannelOp } from '@/types/p2p';
 import type { CommunityConfigPatch, CreateCommunityInput } from '@/types/community';
 import * as Storage from '@/lib/storage';
+import { logger } from '@/lib/logger';
 import { sendBrowserNotification } from '@/hooks/use-notifications';
 
 interface P2PContextType {
@@ -130,7 +131,7 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     const channelId = currentChannelIdRef.current;
     const dmPeerId = currentDMPeerIdRef.current;
 
-    console.log('[P2P Context] Event:', event.type);
+    logger.log('[P2P Context] Event:', event.type);
 
     switch (event.type) {
       case 'message':
@@ -313,7 +314,7 @@ export function P2PProvider({ children }: { children: ReactNode }) {
   const joinServer = useCallback(async (inviteCode: string) => {
     if (!network) throw new Error('Network not initialized');
     
-    console.log('[P2P] Joining server with invite code');
+    logger.log('[P2P] Joining server with invite code');
     setConnectionStatus('connecting');
     
     try {
@@ -329,7 +330,7 @@ export function P2PProvider({ children }: { children: ReactNode }) {
       setAvailablePeersForDM(network.getAvailablePeersForDM());
     } catch (error) {
       setConnectionStatus('disconnected');
-      console.error('Failed to join server:', error);
+      logger.error('Failed to join server:', error);
       throw error;
     }
   }, [network]);
@@ -459,7 +460,7 @@ export function P2PProvider({ children }: { children: ReactNode }) {
   const disconnect = useCallback(async () => {
     if (network) {
       await network.clearPersistedData();
-      network.disconnect();
+      await network.disconnect();
     }
     setNetworkState(null);
     setIsInitialized(false);
