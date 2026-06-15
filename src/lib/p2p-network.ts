@@ -16,7 +16,8 @@ import {
 } from '@/types/p2p';
 import { generateId, generateKeyPair, generateSigningKeyPair, deriveSharedKey, encrypt, decrypt, importPublicKey, signData, verifySignature, KeyPair, generateStorageKey, exportStorageKey, importStorageKey } from './crypto';
 import * as Storage from './storage';
-import { createDefaultCommunityConfig, getTemplateChannels } from '@/types/community';
+import { createDefaultCommunityConfig } from '@/lib/templates';
+import { getTemplateChannels } from '@/types/community';
 import type { CommunityConfig, CommunityConfigPatch, CreateCommunityInput } from '@/types/community';
 import { logger } from './logger';
 import { YjsManager } from './yjs-manager';
