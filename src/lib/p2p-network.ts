@@ -235,7 +235,10 @@ export class P2PNetwork {
 
       // Wire Yjs sync to network layer
       this.yjs.setSyncOutgoingHandler((msg) => this.handleYjsSyncOutgoing(msg));
-      this.yjs.onChange((channelKey) => this.syncCacheFromYjs(channelKey));
+      this.yjs.onChange((channelKey) => {
+        if (channelKey.startsWith('channel:')) this.syncCacheFromYjs(channelKey);
+        if (channelKey.startsWith('dm:')) this.syncCacheFromYjsDM(channelKey);
+      });
     });
   }
 
@@ -854,13 +857,29 @@ export class P2PNetwork {
       timestamp: Date.now(),
     };
 
+    // DM channel keys are "dm:{peerA}:{peerB}" — route updates
+    // to the DM peer (not broadcast to all connections)
+    if (msg.channelKey.startsWith('dm:')) {
+      const parts = msg.channelKey.split(':');
+      const remotePeerId = parts[1] === this.localPeer.id ? parts[2] : parts[1];
+      // Try direct connection, then fall back to host relay
+      const entry = this.connections.get(remotePeerId);
+      if (entry?.conn?.open) {
+        this.sendToConnection(entry.conn, baseEvent);
+      } else if (targetPeerId) {
+        const target = this.connections.get(targetPeerId);
+        if (target?.conn?.open) this.sendToConnection(target.conn, baseEvent);
+      }
+      return;
+    }
+
     if (targetPeerId) {
       const entry = this.connections.get(targetPeerId);
       if (entry?.conn?.open) this.sendToConnection(entry.conn, baseEvent);
       return;
     }
 
-    // yjs-update broadcasts to all; step1/step2 without target does nothing here
+    // Channel yjs-update broadcasts to all
     if (msg.type === 'yjs-update') {
       this.broadcast(baseEvent);
     }
@@ -886,6 +905,33 @@ export class P2PNetwork {
       if (latest) {
         this.emitEvent({ type: 'message', payload: latest, timestamp: Date.now() });
       }
+    });
+  }
+
+  private syncCacheFromYjsDM(channelKey: string): void {
+    if (!channelKey.startsWith('dm:')) return;
+    const parts = channelKey.split(':');
+    if (parts.length < 3) return;
+    const remoteId = parts[1] === this.localPeer.id ? parts[2] : parts[1];
+    this.yjs.getOrCreateDMDoc(remoteId).then(doc => {
+      if (!doc) return;
+      const msgs = this.yjs.getDMMessages(doc);
+      const conv = this.getOrCreateDMConversation({
+        id: remoteId,
+        username: this.dmConversations.get(remoteId)?.peerId.username || `peer-${remoteId.slice(0, 6)}`,
+      });
+      // Merge without duplicates
+      const existingIds = new Set(conv.messages.map(m => m.id));
+      for (const dm of msgs) {
+        if (!existingIds.has(dm.id)) {
+          conv.messages.push(dm);
+          conv.lastMessage = dm;
+          existingIds.add(dm.id);
+        }
+      }
+      this.dmConversations.set(remoteId, conv);
+      this.scheduleSave('dms');
+      this.emitEvent({ type: 'dm-message', payload: { dm: msgs[msgs.length - 1], incoming: true }, timestamp: Date.now() });
     });
   }
 
@@ -1001,6 +1047,7 @@ export class P2PNetwork {
       channelId,
       author: this.localPeer,
       content,
+      seq: ++this.messageSeq,
       timestamp: Date.now(),
     };
 
@@ -1175,6 +1222,12 @@ export class P2PNetwork {
     conv.messages.push(localDm);
     conv.lastMessage = localDm;
     this.dmConversations.set(toPeerId, conv);
+
+    // Persist to Yjs for history sync when peer reconnects
+    this.yjs.getOrCreateDMDoc(toPeerId).then(doc => {
+      if (doc) this.yjs.addDMMessage(doc, wireDm);
+    });
+
     this.scheduleSave('dms');
 
     // Send - try direct connection first, then relay through host
@@ -1223,6 +1276,12 @@ export class P2PNetwork {
       conv.lastMessage = dm;
       conv.unreadCount++;
       this.dmConversations.set(dm.from.id, conv);
+
+      // Persist to Yjs for history sync
+      this.yjs.getOrCreateDMDoc(dm.from.id).then(doc => {
+        if (doc) this.yjs.addDMMessage(doc, dm);
+      });
+
       this.scheduleSave('dms');
       this.emitEvent({ type: 'dm-message', payload: { dm, incoming: true }, timestamp: Date.now() });
     }
@@ -1626,21 +1685,30 @@ export class P2PNetwork {
         }
       }
 
-      // Load DM conversations (metadata only — Yjs not used for DMs yet)
+      // Load DM conversations from Storage
       const storedConvs = await Storage.loadDMConversations();
       for (const c of storedConvs) {
-        if (!this.dmConversations.has(c.peerId)) {
-          const dmMsgs = await Storage.loadDMMessages(c.peerId);
-          this.dmConversations.set(c.peerId, {
-            peerId: { id: c.peerId, username: c.peerUsername, publicKey: c.peerPublicKey },
-            messages: dmMsgs,
-            lastMessage: dmMsgs[dmMsgs.length - 1],
-            unreadCount: 0,
-            isTyping: false,
-            connectionType: 'disconnected',
-            lastSeen: c.lastSeen,
-          });
+        if (this.dmConversations.has(c.peerId)) continue;
+        // Try loading from Yjs doc first for complete history
+        let dmMsgs: DirectMessage[];
+        try {
+          const dmDoc = await this.yjs.getOrCreateDMDoc(c.peerId);
+          dmMsgs = this.yjs.getDMMessages(dmDoc);
+        } catch {
+          dmMsgs = [];
         }
+        if (dmMsgs.length === 0) {
+          dmMsgs = await Storage.loadDMMessages(c.peerId);
+        }
+        this.dmConversations.set(c.peerId, {
+          peerId: { id: c.peerId, username: c.peerUsername, publicKey: c.peerPublicKey },
+          messages: dmMsgs,
+          lastMessage: dmMsgs[dmMsgs.length - 1],
+          unreadCount: 0,
+          isTyping: false,
+          connectionType: 'disconnected',
+          lastSeen: c.lastSeen,
+        });
       }
 
       const loadedMessageCount = Array.from(this.messages.values()).reduce((sum, msgs) => sum + msgs.length, 0)

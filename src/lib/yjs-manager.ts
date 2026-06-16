@@ -98,6 +98,7 @@ export class YjsManager {
         ['authorId', msg.author.id],
         ['authorUsername', msg.author.username],
         ['content', msg.content],
+        ['seq', msg.seq ?? 0],
         ['timestamp', msg.timestamp],
       ]);
       messages.push([entry]);
@@ -135,7 +136,7 @@ export class YjsManager {
           username: map.get('authorUsername') as string,
         },
         content: map.get('content') as string,
-        seq: 0,
+        seq: (map.get('seq') as number) ?? 0,
         timestamp: map.get('timestamp') as number,
       });
     }
