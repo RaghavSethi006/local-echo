@@ -8,12 +8,14 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/component
 const ServerSettingsDialog = lazy(() => import('./ServerSettingsDialog').then(m => ({ default: m.ServerSettingsDialog })));
 const SearchDialog = lazy(() => import('./SearchDialog').then(m => ({ default: m.SearchDialog })));
 const InviteQRDialog = lazy(() => import('./InviteQRDialog').then(m => ({ default: m.InviteQRDialog })));
+const SettingsDialog = lazy(() => import('./SettingsDialog').then(m => ({ default: m.SettingsDialog })));
 
 export function ChannelSidebar() {
   const { currentServer, currentChannel, selectChannel, isCurrentServerHost, localPeer } = useP2P();
   const [textChannelsOpen, setTextChannelsOpen] = useState(true);
   const [voiceChannelsOpen, setVoiceChannelsOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
 
@@ -155,12 +157,16 @@ export function ChannelSidebar() {
             {isCurrentServerHost ? 'Hosting' : 'Online'}
           </p>
         </div>
+        <button onClick={() => setProfileOpen(true)} className="p-1 text-muted-foreground hover:text-foreground transition-colors" aria-label="Profile settings">
+          <Settings className="w-4 h-4" />
+        </button>
       </div>
 
       <Suspense fallback={null}>
         <ServerSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
         <SearchDialog open={searchOpen} onOpenChange={setSearchOpen} />
         <InviteQRDialog open={inviteOpen} onOpenChange={setInviteOpen} />
+        <SettingsDialog open={profileOpen} onOpenChange={setProfileOpen} />
       </Suspense>
     </aside>
   );

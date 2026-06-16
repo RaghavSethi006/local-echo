@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useP2P } from '@/contexts/P2PContext';
 import {
   Dialog,
@@ -9,7 +9,8 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
-import { Copy, LogOut, Shield, Wifi, User } from 'lucide-react';
+import { Copy, Download, LogOut, QrCode, Shield, Wifi, User } from 'lucide-react';
+import QRCode from 'qrcode';
 
 interface SettingsDialogProps {
   open: boolean;
@@ -19,11 +20,34 @@ interface SettingsDialogProps {
 export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const { localPeer, connectionStatus, disconnect } = useP2P();
   const [confirmingLogout, setConfirmingLogout] = useState(false);
+  const [showQR, setShowQR] = useState(false);
+  const qrCanvasRef = useRef<HTMLCanvasElement>(null);
+
+  const profileLink = localPeer
+    ? `local-echo-profile://${localPeer.id}@${localPeer.username}`
+    : '';
+
+  useEffect(() => {
+    if (!showQR || !qrCanvasRef.current || !profileLink) return;
+    QRCode.toCanvas(qrCanvasRef.current, profileLink, {
+      width: 200,
+      margin: 2,
+      color: { dark: '#000', light: '#fff' },
+    });
+  }, [showQR, profileLink]);
 
   const copyPeerId = async () => {
     if (!localPeer?.id) return;
     await navigator.clipboard.writeText(localPeer.id);
     toast.success('Peer ID copied to clipboard');
+  };
+
+  const downloadQR = () => {
+    if (!qrCanvasRef.current || !localPeer) return;
+    const link = document.createElement('a');
+    link.download = `${localPeer.username}-profile-qr.png`;
+    link.href = qrCanvasRef.current.toDataURL('image/png');
+    link.click();
   };
 
   const handleLogout = async () => {
@@ -37,7 +61,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   };
 
   return (
-    <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) setConfirmingLogout(false); }}>
+    <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) { setConfirmingLogout(false); setShowQR(false); } }}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -71,6 +95,24 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             <p className="text-xs text-muted-foreground">
               Share your Peer ID to receive direct messages.
             </p>
+
+            <Button variant="outline" size="sm" onClick={() => setShowQR(!showQR)} className="w-full gap-2">
+              <QrCode className="w-4 h-4" />
+              {showQR ? 'Hide QR Code' : 'Show Profile QR'}
+            </Button>
+
+            {showQR && (
+              <div className="flex flex-col items-center gap-3 pt-2">
+                <canvas ref={qrCanvasRef} className="rounded-lg border border-border" />
+                <p className="text-xs text-muted-foreground text-center">
+                  Scan this code to start a direct message
+                </p>
+                <Button variant="ghost" size="sm" onClick={downloadQR} className="gap-2">
+                  <Download className="w-3.5 h-3.5" />
+                  Save QR
+                </Button>
+              </div>
+            )}
           </div>
 
           {/* Connection */}

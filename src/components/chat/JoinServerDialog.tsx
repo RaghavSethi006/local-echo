@@ -21,7 +21,7 @@ interface JoinServerDialogProps {
 }
 
 export function JoinServerDialog({ open, onOpenChange }: JoinServerDialogProps) {
-  const { joinServer } = useP2P();
+  const { joinServer, startDMByPeerId } = useP2P();
   const [inviteCode, setInviteCode] = useState('');
   const [isJoining, setIsJoining] = useState(false);
   const [scanning, setScanning] = useState(false);
@@ -35,6 +35,29 @@ export function JoinServerDialog({ open, onOpenChange }: JoinServerDialogProps) 
       streamRef.current = null;
     }
     setScanning(false);
+  };
+
+  const handleProfileQR = async (link: string) => {
+    const rest = link.slice('local-echo-profile://'.length);
+    const atIdx = rest.lastIndexOf('@');
+    if (atIdx < 0) return false;
+    const peerId = rest.slice(0, atIdx);
+    const username = rest.slice(atIdx + 1);
+    if (!peerId) return false;
+    await startDMByPeerId(peerId, username);
+    toast.success(`Started DM with ${username || peerId.slice(0, 8)}`);
+    onOpenChange(false);
+    return true;
+  };
+
+  const handleQrResult = async (result: string) => {
+    if (result.startsWith('local-echo-profile://')) {
+      await handleProfileQR(result);
+    } else {
+      setInviteCode(result);
+      setActiveTab('paste');
+      toast.success('QR code scanned successfully');
+    }
   };
 
   const handleJoin = async () => {
@@ -78,9 +101,7 @@ export function JoinServerDialog({ open, onOpenChange }: JoinServerDialogProps) 
         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
         const result = decodeFromCanvas(imageData);
         if (result) {
-          setInviteCode(result);
-          setActiveTab('paste');
-          toast.success('QR code scanned successfully');
+          handleQrResult(result);
         } else {
           toast.error('Could not decode QR code from image');
         }
@@ -124,10 +145,8 @@ export function JoinServerDialog({ open, onOpenChange }: JoinServerDialogProps) 
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
     const result = decodeFromCanvas(imageData);
     if (result) {
-      setInviteCode(result);
       stopCamera();
-      setActiveTab('paste');
-      toast.success('QR code scanned successfully');
+      handleQrResult(result);
     } else {
       requestAnimationFrame(scanFrame);
     }
