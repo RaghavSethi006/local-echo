@@ -1425,8 +1425,24 @@ export class P2PNetwork {
   async loadOlderMessages(serverId: string, channelId: string): Promise<Message[]> {
     const key = `${serverId}:${channelId}`;
     const msgs = this.messages.get(key) || [];
-    if (msgs.length === 0) return [];
-    return msgs;
+
+    if (msgs.length === 0) {
+      const stored = await Storage.loadMessages(serverId, channelId);
+      this.messages.set(key, stored);
+      return stored;
+    }
+
+    const oldestTs = msgs.reduce((min, m) => m.timestamp < min ? m.timestamp : min, msgs[0].timestamp);
+    const older = await Storage.loadMessagesBefore(serverId, channelId, oldestTs, 50);
+    if (older.length === 0) return [];
+
+    const existingIds = new Set(msgs.map(m => m.id));
+    const newMsgs = older.filter(m => !existingIds.has(m.id));
+    if (newMsgs.length === 0) return [];
+
+    msgs.unshift(...newMsgs);
+    this.messages.set(key, msgs);
+    return newMsgs;
   }
 
   getOnlinePeers(): PeerId[] {
