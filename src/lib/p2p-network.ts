@@ -464,6 +464,9 @@ export class P2PNetwork {
   async generateInvite(serverId: string): Promise<string> {
     const server = this.servers.get(serverId);
     if (!server) throw new Error('Server not found');
+    if (!this.hasPermission(serverId, this.localPeer.id, 'create_invites')) {
+      throw new Error('You do not have permission to create invites for this server.');
+    }
 
     const payload = {
       serverId: server.id,
@@ -1061,6 +1064,12 @@ export class P2PNetwork {
   // ==================== MESSAGING ====================
 
   async sendMessage(serverId: string, channelId: string, content: string): Promise<Message> {
+    if (!this.isServerMember(serverId, this.localPeer.id)) {
+      throw new Error('You are not a member of this server.');
+    }
+    if (!this.hasPermission(serverId, this.localPeer.id, 'send_messages')) {
+      throw new Error('You do not have permission to send messages in this server.');
+    }
     const MAX_MESSAGE_BYTES = 8192;
     if (new TextEncoder().encode(content).byteLength > MAX_MESSAGE_BYTES) {
       throw new Error('Message is too long (max 8KB). Please split it into smaller messages.');
@@ -1200,6 +1209,24 @@ export class P2PNetwork {
   }
 
   // ==================== DM METHODS ====================
+
+  // ==================== PERMISSION CHECKS ====================
+
+  private isServerMember(serverId: string, peerId: string): boolean {
+    const server = this.servers.get(serverId);
+    if (!server) return false;
+    return server.members.some(m => m.id === peerId);
+  }
+
+  private hasPermission(serverId: string, peerId: string, permission: string): boolean {
+    const server = this.servers.get(serverId);
+    if (!server) return false;
+    // Host/creator has all permissions
+    if (server.hostId === peerId) return true;
+    // TODO: check against CommunityRole permissions and PermissionOverwrites
+    // For now, allow all members basic permissions
+    return this.isServerMember(serverId, peerId);
+  }
 
   private async getOrDeriveSharedKey(remotePeerId: string, remotePublicKeyString: string): Promise<CryptoKey | null> {
     if (this.sharedKeys.has(remotePeerId)) {
