@@ -5,6 +5,7 @@ import type { CommunityConfigPatch, CreateCommunityInput } from '@/types/communi
 import * as Storage from '@/lib/storage';
 import { logger } from '@/lib/logger';
 import { sendBrowserNotification } from '@/hooks/use-notifications';
+import { toast } from 'sonner';
 
 interface P2PContextType {
   network: P2PNetwork | null;
@@ -236,6 +237,17 @@ export function P2PProvider({ children }: { children: ReactNode }) {
       case 'peer-list':
       case 'config-sync':
         break;
+      case 'error': {
+        const errPayload = event.payload as { message: string; level?: string };
+        if (errPayload?.message) {
+          const msg = errPayload.message;
+          const level = errPayload.level || 'error';
+          if (level === 'error') toast.error(msg);
+          else if (level === 'warn') toast.warning(msg);
+          else toast.info(msg);
+        }
+        break;
+      }
     }
   }, []);
 

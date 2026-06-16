@@ -221,6 +221,11 @@ export class P2PNetwork {
 
       this.peer.on('error', (err) => {
         logger.error('[P2P] PeerJS error:', err);
+        this.emitEvent({
+          type: 'error',
+          payload: { message: 'Signaling server error: ' + (err.message || 'Unknown error'), level: 'error' },
+          timestamp: Date.now(),
+        });
       });
 
       this.peer.on('disconnected', () => {
@@ -233,6 +238,11 @@ export class P2PNetwork {
           }, delay);
         } else {
           logger.error('[P2P] Max reconnection attempts reached');
+          this.emitEvent({
+            type: 'error',
+            payload: { message: 'Could not reconnect to signaling server after multiple attempts.', level: 'error' },
+            timestamp: Date.now(),
+          });
         }
       });
 
@@ -728,12 +738,22 @@ export class P2PNetwork {
 
       // Host migration if the host left
       if (remotePeerId === this.hostId && !this.isHost) {
+        this.emitEvent({
+          type: 'error',
+          payload: { message: 'Host disconnected. Migrating to new host...', level: 'warn' },
+          timestamp: Date.now(),
+        });
         this.initiateHostMigration();
       }
     });
 
     conn.on('error', (err) => {
       logger.error('[P2P] Connection error with', remotePeerId, ':', err);
+      this.emitEvent({
+        type: 'error',
+        payload: { message: `Connection lost with ${remotePeerId.slice(0, 8)}...`, level: 'warn' },
+        timestamp: Date.now(),
+      });
     });
   }
 

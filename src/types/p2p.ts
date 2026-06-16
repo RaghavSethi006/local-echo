@@ -69,6 +69,8 @@ export interface Server {
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'host';
 export type ViewMode = 'servers' | 'dms';
 
+export type ErrorLevel = 'info' | 'warn' | 'error';
+
 export interface P2PEvent {
   type: 
     | 'message' 
@@ -87,7 +89,8 @@ export interface P2PEvent {
     | 'ping'
     | 'pong'
     | 'yjs-sync'
-    | 'yjs-update';
+    | 'yjs-update'
+    | 'error';
   payload: unknown;
   seq?: number;
   timestamp: number;
