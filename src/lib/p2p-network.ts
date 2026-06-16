@@ -153,6 +153,7 @@ export class P2PNetwork {
 
   // DM state
   private dmConversations: Map<string, DMConversation> = new Map();
+  private pendingDMMessages: Map<string, DirectMessage[]> = new Map();
   
   // Persistence flags
   private persistenceReady: boolean = false;
@@ -651,6 +652,7 @@ export class P2PNetwork {
       });
 
       this.setupConnectionHandlers(conn, conn.peer, false);
+      this.flushPendingDMs(conn.peer);
 
       // Add to all servers as member
       if (this.isHost) {
@@ -1157,6 +1159,7 @@ export class P2PNetwork {
       });
 
       this.setupConnectionHandlers(conn, newHostId, false);
+      this.flushPendingDMs(newHostId);
 
       // Establish bulk connection
       const bulkConn = this.peer!.connect(newHostId, {
@@ -1254,6 +1257,7 @@ export class P2PNetwork {
           });
           this.setupConnectionHandlers(conn, peerId);
           this.setDMConnectionType(peerId, 'direct');
+          this.flushPendingDMs(peerId);
         });
 
         conn.on('error', () => {
@@ -1333,7 +1337,47 @@ export class P2PNetwork {
     }
 
     this.emitEvent({ type: 'dm-message', payload: { dm: localDm, incoming: false }, timestamp: Date.now() });
+
+    // Queue for offline delivery if peer is unreachable
+    const canDeliverDirect = entry?.conn?.open;
+    const canDeliverRelay = this.hostConn?.open;
+    if (!canDeliverDirect && !canDeliverRelay) {
+      this.queuePendingDM(toPeerId, wireDm);
+    }
+
     return localDm;
+  }
+
+  private queuePendingDM(peerId: string, dm: DirectMessage): void {
+    const queue = this.pendingDMMessages.get(peerId) || [];
+    queue.push(dm);
+    this.pendingDMMessages.set(peerId, queue);
+    logger.log('[P2P DM] Queued message for offline delivery to:', peerId.slice(0, 8));
+  }
+
+  private flushPendingDMs(peerId: string): void {
+    const queue = this.pendingDMMessages.get(peerId);
+    if (!queue || queue.length === 0) return;
+    logger.log('[P2P DM] Flushing', queue.length, 'pending messages to:', peerId.slice(0, 8));
+    const entry = this.connections.get(peerId);
+    if (entry?.conn?.open) {
+      for (const dm of queue) {
+        this.sendToConnection(entry.conn, { type: 'dm-message', payload: dm, timestamp: Date.now() });
+      }
+      this.pendingDMMessages.delete(peerId);
+      this.emitEvent({
+        type: 'error',
+        payload: { message: `Delivered ${queue.length} pending message(s) to peer.`, level: 'info' },
+        timestamp: Date.now(),
+      });
+    }
+  }
+
+  getPendingDMCount(peerId?: string): number {
+    if (peerId) return this.pendingDMMessages.get(peerId)?.length || 0;
+    let count = 0;
+    for (const q of this.pendingDMMessages.values()) count += q.length;
+    return count;
   }
 
   private async handleDMMessage(dm: DirectMessage, _fromPeerId: string): Promise<void> {
