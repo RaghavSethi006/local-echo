@@ -24,7 +24,7 @@ Without a central server, peers need a way to discover each other. Solutions inc
 ### NAT Traversal Challenges
 Most home networks use NAT, making direct connections difficult:
 - **STUN servers** — Help peers discover their public IP (we use Google's public STUN)
-- **TURN servers** — Relay traffic when direct connection fails (not included to stay cloudless)
+- **TURN servers** — Relay traffic when direct connection fails (configurable via `VITE_ICE_SERVERS` env var)
 - **Hole punching** — WebRTC handles this automatically when possible
 
 ### Consistency vs Availability
@@ -212,9 +212,21 @@ When direct connection fails (complex NAT, firewall):
 - **Frontend:** React 18 + TypeScript
 - **Styling:** Tailwind CSS + shadcn/ui
 - **State:** React Context + Custom hooks
-- **Networking:** WebRTC DataChannels
-- **Crypto:** Web Crypto API
+- **Networking:** WebRTC DataChannels + MediaStream (voice)
+- **Crypto:** Web Crypto API (ECDH, AES-256-GCM)
+- **Collaboration:** Yjs + y-indexeddb for CRDT-based state sync
 - **Build:** Vite
+
+## ✨ Features (v0.2.0)
+
+### Recent Additions
+
+- **Voice Channels** — WebRTC audio chat via `getUserMedia` and PeerJS calls. Mute/unmute toggle. Active state shown in UI.
+- **Configurable ICE Servers** — Set `VITE_ICE_SERVERS` environment variable as a JSON array of `RTCIceServer` objects to configure TURN/STUN.
+- **Offline DM Queue** — Outbound direct messages are queued when the peer is unreachable and automatically delivered when they reconnect.
+- **User-Facing Errors** — Error events emit sonner toast notifications for connection failures, reconnection limits, and host migration.
+- **Permission Enforcement** — Membership and permission checks before sending messages or generating invites. Extensible permission model via `CommunityConfig.roles` and `permissionOverwrites`.
+- **Unit Tests** — 14 tests for network utility functions, permission checks, DM queue, and state management.
 
 ## 🎯 Best Possible Compromise
 
@@ -230,22 +242,19 @@ This design represents the optimal balance for a browser-based cloudless chat:
 
 ### What We Sacrificed
 
-- **Offline messaging** — Peers must be online simultaneously
-- **Persistence** — Messages exist only in memory
+- **Offline messaging** — Peers must be online simultaneously (DMs queue for delivery when peer reconnects)
+- **Persistence** — Messages persist locally via IndexedDB and Yjs
 - **Large scale** — Star topology limits to ~50 peers practically
-- **Voice/Video** — Would require TURN servers for reliability
 - **Group DMs** — Currently limited to 1-to-1
 
-## 🚀 Future Enhancements (Native App)
+## 🚀 Future Enhancements
 
-With Tauri or Electron, we could add:
-- [ ] Wi-Fi Direct for true offline
+- [ ] Wi-Fi Direct for true offline (requires native app)
 - [ ] mDNS discovery for automatic LAN detection
 - [ ] BLE beacons for peer presence
-- [ ] Local database for message persistence
-- [ ] Store-and-forward for offline delivery
-- [ ] QR code scanning for easy joins
 - [ ] Group DMs with multi-party encryption
+- [ ] End-to-end encrypted voice channels
+- [ ] File sharing through data channels
 
 ## 📝 License
 
