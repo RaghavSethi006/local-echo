@@ -90,7 +90,8 @@ export interface P2PEvent {
     | 'pong'
     | 'yjs-sync'
     | 'yjs-update'
-    | 'error';
+    | 'error'
+    | 'voice-state-changed';
   payload: unknown;
   seq?: number;
   timestamp: number;

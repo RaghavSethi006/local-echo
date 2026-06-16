@@ -4,6 +4,7 @@ import { useP2P } from '@/contexts/P2PContext';
 import { Hash, Users } from 'lucide-react';
 import { MessageInput } from './MessageInput';
 import { MessageItem } from './MessageItem';
+import { VoiceChannelView } from './VoiceChannelView';
 
 export function MessageArea() {
   const { currentServer, currentChannel, messages, onlinePeers, loadOlderMessages } = useP2P();
@@ -73,6 +74,10 @@ export function MessageArea() {
         </div>
       </main>
     );
+  }
+
+  if (currentChannel.type === 'voice') {
+    return <VoiceChannelView />;
   }
 
   return (

@@ -54,6 +54,13 @@ interface P2PContextType {
   startNewDM: (peer: PeerId) => void;
   startDMByPeerId: (peerId: string, username?: string) => Promise<void>;
 
+  // Voice
+  isInVoiceChannel: boolean;
+  muted: boolean;
+  joinVoiceChannel: (serverId: string, channelId: string) => Promise<void>;
+  leaveVoiceChannel: () => Promise<void>;
+  toggleMute: () => boolean;
+
   // Persistence
   hasStoredIdentity: boolean;
   restoreSession: () => Promise<void>;
@@ -95,6 +102,10 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     [currentServer, currentChannelId]
   );
   const currentDMPeer = dmConversations.find(c => c.peerId.id === currentDMPeerId)?.peerId || null;
+
+  // Voice state
+  const [isInVoiceChannel, setIsInVoiceChannel] = useState(false);
+  const [muted, setMuted] = useState(false);
 
   const setNetworkState = useCallback((net: P2PNetwork | null) => {
     setNetwork(net);
@@ -245,6 +256,13 @@ export function P2PProvider({ children }: { children: ReactNode }) {
           if (level === 'error') toast.error(msg);
           else if (level === 'warn') toast.warning(msg);
           else toast.info(msg);
+        }
+        break;
+      }
+      case 'voice-state-changed': {
+        if (net) {
+          setIsInVoiceChannel(net.isInVoiceChannel());
+          setMuted(net.isMuted());
         }
         break;
       }
@@ -480,6 +498,26 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     setDmConversations(network.getDMConversations());
   }, [network, currentDMPeerId]);
 
+  // Voice actions
+  const joinVoiceChannel = useCallback(async (serverId: string, channelId: string) => {
+    await network?.joinVoiceChannel(serverId, channelId);
+    setIsInVoiceChannel(network?.isInVoiceChannel() ?? false);
+    setMuted(network?.isMuted() ?? false);
+  }, [network]);
+
+  const leaveVoiceChannel = useCallback(async () => {
+    await network?.leaveVoiceChannel();
+    setIsInVoiceChannel(false);
+    setMuted(false);
+  }, [network]);
+
+  const toggleMuteCb = useCallback(() => {
+    if (!network) return false;
+    const m = network.toggleMute();
+    setMuted(m);
+    return m;
+  }, [network]);
+
   const disconnect = useCallback(async () => {
     if (network) {
       await network.clearPersistedData();
@@ -541,6 +579,11 @@ export function P2PProvider({ children }: { children: ReactNode }) {
         updateCurrentServer,
         leaveCurrentServer,
         deleteCurrentServer,
+        isInVoiceChannel,
+        muted,
+        joinVoiceChannel,
+        leaveVoiceChannel,
+        toggleMute: toggleMuteCb,
       }}
     >
       {children}

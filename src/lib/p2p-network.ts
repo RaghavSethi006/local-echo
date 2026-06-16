@@ -220,6 +220,19 @@ export class P2PNetwork {
         this.handleIncomingConnection(conn);
       });
 
+      this.peer.on('call', (call) => {
+        logger.log('[P2P] Incoming voice call from:', call.peer);
+        if (this.localStream) {
+          call.answer(this.localStream);
+          this.voiceConnections.set(call.peer, call);
+          call.on('stream', () => {});
+          call.on('close', () => this.voiceConnections.delete(call.peer));
+          call.on('error', (err) => logger.error('[P2P Voice] Incoming call error:', err));
+        } else {
+          call.close();
+        }
+      });
+
       this.peer.on('error', (err) => {
         logger.error('[P2P] PeerJS error:', err);
         this.emitEvent({
@@ -1474,6 +1487,102 @@ export class P2PNetwork {
       this.dmConversations.set(peerId, conv);
     }
   }
+
+  // ==================== VOICE CHANNELS ====================
+
+  private localStream: MediaStream | null = null;
+  private voiceConnections: Map<string, MediaConnection> = new Map();
+  private muted = false;
+  private activeVoiceChannel: { serverId: string; channelId: string } | null = null;
+
+  async joinVoiceChannel(serverId: string, channelId: string): Promise<void> {
+    if (this.activeVoiceChannel) {
+      await this.leaveVoiceChannel();
+    }
+
+    try {
+      this.localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+      this.emitEvent({
+        type: 'error',
+        payload: { message: 'Could not access microphone. Please check permissions.', level: 'error' },
+        timestamp: Date.now(),
+      });
+      return;
+    }
+
+    this.activeVoiceChannel = { serverId, channelId };
+    this.muted = false;
+
+    const membersToCall: string[] = [];
+    this.servers.get(serverId)?.members.forEach(m => {
+      if (m.id !== this.localPeer.id && this.connections.has(m.id)) {
+        membersToCall.push(m.id);
+      }
+    });
+
+    for (const peerId of membersToCall) {
+      this.callPeerVoice(peerId);
+    }
+
+    this.emitEvent({
+      type: 'voice-state-changed',
+      payload: { joined: true, serverId, channelId },
+      timestamp: Date.now(),
+    });
+  }
+
+  async leaveVoiceChannel(): Promise<void> {
+    this.voiceConnections.forEach(conn => conn.close());
+    this.voiceConnections.clear();
+
+    if (this.localStream) {
+      this.localStream.getTracks().forEach(t => t.stop());
+      this.localStream = null;
+    }
+
+    this.muted = false;
+    this.activeVoiceChannel = null;
+
+    this.emitEvent({
+      type: 'voice-state-changed',
+      payload: { joined: false },
+      timestamp: Date.now(),
+    });
+  }
+
+  private callPeerVoice(peerId: string): void {
+    if (!this.peer || !this.localStream) return;
+    try {
+      const call = this.peer.call(peerId, this.localStream);
+      if (!call) return;
+      this.voiceConnections.set(peerId, call);
+      call.on('stream', () => {});
+      call.on('close', () => this.voiceConnections.delete(peerId));
+      call.on('error', (err) => logger.error('[P2P Voice] Call error:', err));
+    } catch (err) {
+      logger.warn('[P2P Voice] Failed to call peer:', peerId, err);
+    }
+  }
+
+  toggleMute(): boolean {
+    this.muted = !this.muted;
+    if (this.localStream) {
+      this.localStream.getAudioTracks().forEach(t => {
+        t.enabled = !this.muted;
+      });
+    }
+    this.emitEvent({
+      type: 'voice-state-changed',
+      payload: { muted: this.muted },
+      timestamp: Date.now(),
+    });
+    return this.muted;
+  }
+
+  isMuted(): boolean { return this.muted; }
+  isInVoiceChannel(): boolean { return this.activeVoiceChannel !== null; }
+  getActiveVoiceChannel(): { serverId: string; channelId: string } | null { return this.activeVoiceChannel; }
 
   // ==================== UTILITIES ====================
 
