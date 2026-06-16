@@ -145,6 +145,7 @@ export class P2PNetwork {
   private hostConn: DataConnection | null = null;
   private bulkConnections: Map<string, DataConnection> = new Map();
   private bulkHostConn: DataConnection | null = null;
+  private messageSeq = 0;
   private readonly CHUNK_SIZE = 12_000;
   private chunkBuffers: Map<string, Map<string, Array<string | null>>> = new Map();
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
@@ -799,8 +800,6 @@ export class P2PNetwork {
         }
         break;
       }
-      case 'history-offer':
-      case 'history-merge':
       case 'peer-list': {
         const peers = (event.payload as { peers?: PeerId[] }).peers;
         peers?.forEach(p => {
@@ -1380,11 +1379,6 @@ export class P2PNetwork {
       this.dmConversations.set(peerId, conv);
     }
   }
-
-  // ==================== HISTORY MERGE (Cloudless Async Sync) ====================
-  // When two peers reconnect after being offline, they exchange message history
-  // for any channels/DMs they share, dedupe by message id, and rebuild a unified
-  // timeline. This lets messages propagate even when peers were never online together.
 
   // ==================== UTILITIES ====================
 

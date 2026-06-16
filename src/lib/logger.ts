@@ -1,4 +1,7 @@
-const DEBUG = false;
+const DEBUG = typeof window !== 'undefined' && (
+  localStorage.getItem('local-echo-debug') !== null ||
+  new URLSearchParams(window.location.search).has('debug')
+);
 
 export const logger = {
   log: (...args: unknown[]) => {

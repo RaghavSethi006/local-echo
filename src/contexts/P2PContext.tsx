@@ -233,8 +233,6 @@ export function P2PProvider({ children }: { children: ReactNode }) {
           }
         }
         break;
-      case 'history-offer':
-      case 'history-merge':
       case 'peer-list':
       case 'config-sync':
         break;

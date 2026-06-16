@@ -40,11 +40,14 @@ export function MessageInput() {
   return (
     <form onSubmit={handleSubmit} className="px-3 sm:px-4 pb-4 pt-2">
       <div className="relative flex items-end bg-secondary rounded-lg">
-        {content.length > 1500 && (
-          <span className="text-xs text-warning absolute bottom-2 right-16">
-            {content.length}/~2000
-          </span>
-        )}
+        {content.length > 1500 && (() => {
+          const byteLen = new TextEncoder().encode(content).byteLength;
+          return (
+            <span className="text-xs text-warning absolute bottom-2 right-16">
+              {byteLen}/8192
+            </span>
+          );
+        })()}
         {/* Input */}
         <textarea
           ref={inputRef}

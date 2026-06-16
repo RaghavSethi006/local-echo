@@ -5,10 +5,12 @@ import { Plus, Search, Settings, MessageCircle, Wifi, Radio } from 'lucide-react
 import { Button } from '@/components/ui/button';
 
 const NewDMDialog = lazy(() => import('./NewDMDialog').then(m => ({ default: m.NewDMDialog })));
+const SettingsDialog = lazy(() => import('./SettingsDialog').then(m => ({ default: m.SettingsDialog })));
 
 export function DMList() {
   const { dmConversations, currentDMPeer, openDM, localPeer, onlinePeers } = useP2P();
   const [showNewDMDialog, setShowNewDMDialog] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
 
   const filteredConversations = dmConversations.filter(conv =>
@@ -190,13 +192,14 @@ export function DMList() {
           </p>
           <p className="text-xs text-muted-foreground">Online</p>
         </div>
-        <button className="p-1 text-muted-foreground hover:text-foreground transition-colors">
+        <button onClick={() => setShowSettings(true)} className="p-1 text-muted-foreground hover:text-foreground transition-colors">
           <Settings className="w-4 h-4" />
         </button>
       </div>
 
       <Suspense fallback={null}>
         <NewDMDialog open={showNewDMDialog} onOpenChange={setShowNewDMDialog} />
+        <SettingsDialog open={showSettings} onOpenChange={setShowSettings} />
       </Suspense>
     </aside>
   );
