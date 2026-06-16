@@ -1070,7 +1070,7 @@ export class P2PNetwork {
   private initiateHostMigration(): void {
     const candidates = [this.localPeer.id, ...Array.from(this.connections.keys())
       .filter(id => this.connections.get(id)?.status === 'online')];
-    
+
     candidates.sort();
     const newHostId = candidates[0];
 
@@ -1096,14 +1096,80 @@ export class P2PNetwork {
       const entry = this.connections.get(newHostId);
       if (entry) {
         this.hostConn = entry.conn;
+        this.bulkHostConn = this.bulkConnections.get(newHostId) || null;
+      } else {
+        // No connection to the new host — re-establish
+        this.reconnectToHost(newHostId);
       }
-      this.bulkHostConn = this.bulkConnections.get(newHostId) || null;
     }
 
     this.emitEvent({
       type: 'host-changed',
       payload: { newHostId },
       timestamp: Date.now(),
+    });
+  }
+
+  private reconnectToHost(newHostId: string): void {
+    if (!this.peer) return;
+    logger.log('[P2P] Reconnecting to new host:', newHostId);
+    const conn = this.peer.connect(newHostId, {
+      reliable: true,
+      metadata: {
+        type: 'host-rejoin',
+        peerInfo: this.localPeer,
+        channelType: 'rt',
+      },
+    });
+
+    conn.on('open', () => {
+      logger.log('[P2P] Reconnected to new host:', newHostId);
+      this.hostConn = conn;
+      this.hostId = newHostId;
+      this.connections.set(newHostId, {
+        peerId: { id: newHostId, username: 'New Host' },
+        conn,
+        status: 'online',
+        lastSeen: Date.now(),
+      });
+
+      this.setupConnectionHandlers(conn, newHostId, false);
+
+      // Establish bulk connection
+      const bulkConn = this.peer!.connect(newHostId, {
+        reliable: true,
+        metadata: {
+          type: 'host-rejoin',
+          peerInfo: this.localPeer,
+          channelType: 'bulk',
+        },
+      });
+
+      bulkConn.on('open', () => {
+        this.bulkHostConn = bulkConn;
+        this.bulkConnections.set(newHostId, bulkConn);
+        this.setupConnectionHandlers(bulkConn, newHostId, true);
+
+        // Send sync request to get server state
+        this.sendToConnection(conn, {
+          type: 'sync-request',
+          payload: { peerInfo: this.localPeer },
+          timestamp: Date.now(),
+        });
+
+        // Initiate Yjs sync for all channel docs
+        this.servers.forEach(server => {
+          server.channels.forEach(ch => {
+            const channelKey = this.yjs.channelKey(server.id, ch.id);
+            this.yjs.getOrCreateChannelDoc(server.id, ch.id);
+            this.yjs.sendSyncStep1(channelKey);
+          });
+        });
+      });
+    });
+
+    conn.on('error', (err) => {
+      logger.error('[P2P] Reconnection to new host failed:', err);
     });
   }
 
