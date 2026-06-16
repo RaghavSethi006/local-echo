@@ -65,7 +65,7 @@ export interface P2PNetworkOptions {
   iceServers?: RTCIceServer[];
 }
 
-function uint8ArrayToBase64(bytes: Uint8Array): string {
+export function uint8ArrayToBase64(bytes: Uint8Array): string {
   let binary = '';
   for (let i = 0; i < bytes.length; i++) {
     binary += String.fromCharCode(bytes[i]);
@@ -73,7 +73,7 @@ function uint8ArrayToBase64(bytes: Uint8Array): string {
   return btoa(binary);
 }
 
-function base64ToUint8Array(base64: string): Uint8Array {
+export function base64ToUint8Array(base64: string): Uint8Array {
   const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {
@@ -82,7 +82,7 @@ function base64ToUint8Array(base64: string): Uint8Array {
   return bytes;
 }
 
-async function compressInvite(json: string): Promise<string> {
+export async function compressInvite(json: string): Promise<string> {
   const encoder = new TextEncoder();
   const inputBytes = encoder.encode(json);
   const cs = new CompressionStream('gzip');
@@ -106,7 +106,7 @@ async function compressInvite(json: string): Promise<string> {
   return uint8ArrayToBase64(result);
 }
 
-async function decompressInvite(base64: string): Promise<string> {
+export async function decompressInvite(base64: string): Promise<string> {
   const compressed = base64ToUint8Array(base64);
   const ds = new DecompressionStream('gzip');
   const writer = ds.writable.getWriter();
