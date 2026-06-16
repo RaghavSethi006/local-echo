@@ -64,6 +64,70 @@ export interface P2PNetworkOptions {
   signalingPath?: string;
 }
 
+function uint8ArrayToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+}
+
+function base64ToUint8Array(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
+async function compressInvite(json: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const inputBytes = encoder.encode(json);
+  const cs = new CompressionStream('gzip');
+  const writer = cs.writable.getWriter();
+  await writer.write(inputBytes);
+  await writer.close();
+  const reader = cs.readable.getReader();
+  const chunks: Uint8Array[] = [];
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  const total = chunks.reduce((s, c) => s + c.length, 0);
+  const result = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return uint8ArrayToBase64(result);
+}
+
+async function decompressInvite(base64: string): Promise<string> {
+  const compressed = base64ToUint8Array(base64);
+  const ds = new DecompressionStream('gzip');
+  const writer = ds.writable.getWriter();
+  await writer.write(compressed);
+  await writer.close();
+  const reader = ds.readable.getReader();
+  const chunks: Uint8Array[] = [];
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  const total = chunks.reduce((s, c) => s + c.length, 0);
+  const result = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    result.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return new TextDecoder().decode(result);
+}
+
 export class P2PNetwork {
   private localPeer: PeerId;
   private keyPair: KeyPair | null = null;
@@ -394,12 +458,23 @@ export class P2PNetwork {
     const signature = this.signingKeyPair
       ? await signData(payloadStr, this.signingKeyPair.signingKey)
       : '';
-    return btoa(JSON.stringify({ payload, signature }));
+    const json = JSON.stringify({ payload, signature });
+    try {
+      return await compressInvite(json);
+    } catch {
+      return btoa(json);
+    }
   }
 
   // Join server by connecting to the host's PeerJS ID
   async joinServer(inviteCode: string): Promise<Server> {
-    const parsedInvite = JSON.parse(atob(inviteCode));
+    let parsedInvite: Record<string, unknown>;
+    try {
+      const decompressed = await decompressInvite(inviteCode);
+      parsedInvite = JSON.parse(decompressed);
+    } catch {
+      parsedInvite = JSON.parse(atob(inviteCode));
+    }
     const invite = parsedInvite.payload ?? parsedInvite;
     const signature = parsedInvite.signature;
     if (invite.hostVerifyKey && signature) {

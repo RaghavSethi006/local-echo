@@ -4,17 +4,18 @@ import { cn } from '@/lib/utils';
 import { Hash, Volume2, ChevronDown, Settings, UserPlus, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { toast } from 'sonner';
 
 const ServerSettingsDialog = lazy(() => import('./ServerSettingsDialog').then(m => ({ default: m.ServerSettingsDialog })));
 const SearchDialog = lazy(() => import('./SearchDialog').then(m => ({ default: m.SearchDialog })));
+const InviteQRDialog = lazy(() => import('./InviteQRDialog').then(m => ({ default: m.InviteQRDialog })));
 
 export function ChannelSidebar() {
-  const { currentServer, currentChannel, selectChannel, generateInvite, isCurrentServerHost, localPeer } = useP2P();
+  const { currentServer, currentChannel, selectChannel, isCurrentServerHost, localPeer } = useP2P();
   const [textChannelsOpen, setTextChannelsOpen] = useState(true);
   const [voiceChannelsOpen, setVoiceChannelsOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [inviteOpen, setInviteOpen] = useState(false);
 
   if (!currentServer) {
     return (
@@ -31,14 +32,8 @@ export function ChannelSidebar() {
   const textChannels = currentServer.channels.filter(c => c.type === 'text');
   const voiceChannels = currentServer.channels.filter(c => c.type === 'voice');
 
-  const handleCopyInvite = async () => {
-    try {
-      const invite = await generateInvite();
-      await navigator.clipboard.writeText(invite);
-      toast.success('Invite code copied to clipboard');
-    } catch {
-      toast.error('Failed to generate invite');
-    }
+  const handleInvite = () => {
+    setInviteOpen(true);
   };
 
   return (
@@ -74,7 +69,7 @@ export function ChannelSidebar() {
         <Button
           variant="ghost"
           size="sm"
-          onClick={handleCopyInvite}
+          onClick={handleInvite}
           className="w-full justify-start gap-2 text-muted-foreground hover:text-foreground hover:bg-channel-hover"
         >
           <UserPlus className="w-4 h-4" />
@@ -164,6 +159,7 @@ export function ChannelSidebar() {
       <Suspense fallback={null}>
         <ServerSettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
         <SearchDialog open={searchOpen} onOpenChange={setSearchOpen} />
+        <InviteQRDialog open={inviteOpen} onOpenChange={setInviteOpen} />
       </Suspense>
     </aside>
   );
