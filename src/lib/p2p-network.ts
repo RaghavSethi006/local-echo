@@ -62,6 +62,7 @@ export interface P2PNetworkOptions {
   signalingPort?: number;
   signalingSecure?: boolean;
   signalingPath?: string;
+  iceServers?: RTCIceServer[];
 }
 
 function uint8ArrayToBase64(bytes: Uint8Array): string {
@@ -198,6 +199,9 @@ export class P2PNetwork {
       }
       if (this.options.signalingPath) {
         peerOptions.path = this.options.signalingPath;
+      }
+      if (this.options.iceServers) {
+        peerOptions.config = { iceServers: this.options.iceServers };
       }
       this.peer = new Peer(this.localPeer.id, peerOptions);
 

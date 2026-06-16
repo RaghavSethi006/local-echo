@@ -248,11 +248,19 @@ export function P2PProvider({ children }: { children: ReactNode }) {
   }, [network, handleEvent]);
 
   const initializeNetwork = useCallback(async (username: string, existingId?: string) => {
+    let iceServers: RTCIceServer[] | undefined;
+    try {
+      const raw = import.meta.env.VITE_ICE_SERVERS as string | undefined;
+      if (raw) iceServers = JSON.parse(raw) as RTCIceServer[];
+    } catch {
+      logger.warn('[P2P] Failed to parse VITE_ICE_SERVERS env var');
+    }
     const net = new P2PNetwork(username, existingId, {
       signalingHost: import.meta.env.VITE_PEERJS_HOST as string | undefined,
       signalingPort: import.meta.env.VITE_PEERJS_PORT ? Number(import.meta.env.VITE_PEERJS_PORT) : undefined,
       signalingSecure: import.meta.env.VITE_PEERJS_SECURE === 'true' ? true : undefined,
       signalingPath: import.meta.env.VITE_PEERJS_PATH as string | undefined,
+      iceServers,
     });
     await net.initialize();
     
