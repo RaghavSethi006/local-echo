@@ -65,6 +65,14 @@ export interface P2PNetworkOptions {
   iceServers?: RTCIceServer[];
 }
 
+async function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out (${ms}ms)`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer!));
+}
+
 export function uint8ArrayToBase64(bytes: Uint8Array): string {
   let binary = '';
   for (let i = 0; i < bytes.length; i++) {
@@ -495,8 +503,9 @@ export class P2PNetwork {
       : '';
     const json = JSON.stringify({ payload, signature });
     try {
-      return await compressInvite(json);
-    } catch {
+      return await withTimeout(compressInvite(json), 3000, 'compressInvite');
+    } catch (err) {
+      console.error('[P2P] compressInvite failed, falling back to base64:', err);
       return btoa(json);
     }
   }
@@ -505,9 +514,10 @@ export class P2PNetwork {
   async joinServer(inviteCode: string): Promise<Server> {
     let parsedInvite: Record<string, unknown>;
     try {
-      const decompressed = await decompressInvite(inviteCode);
+      const decompressed = await withTimeout(decompressInvite(inviteCode), 3000, 'decompressInvite');
       parsedInvite = JSON.parse(decompressed);
-    } catch {
+    } catch (err) {
+      console.error('[P2P] decompressInvite failed, falling back to atob:', err);
       parsedInvite = JSON.parse(atob(inviteCode));
     }
     const invite = parsedInvite.payload ?? parsedInvite;
