@@ -158,6 +158,8 @@ export class P2PNetwork {
   private readonly CHUNK_SIZE = 12_000;
   private chunkBuffers: Map<string, Map<string, Array<string | null>>> = new Map();
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
+  private migrationInProgress = false;
+  private migrationTimeout: ReturnType<typeof setTimeout> | null = null;
 
   // DM state
   private dmConversations: Map<string, DMConversation> = new Map();
@@ -791,6 +793,15 @@ export class P2PNetwork {
       case 'host-changed':
         this.emitEvent(event);
         break;
+      case 'host-claim':
+        this.handleHostClaim(event.payload as { claimantId: string; proposedHostId: string; view: string[] });
+        break;
+      case 'host-conflict':
+        this.handleHostConflict(event.payload as { myCandidate: string; myView: string[] });
+        break;
+      case 'host-confirmed':
+        this.handleHostConfirmed(event.payload as { newHostId: string });
+        break;
       case 'dm-message':
         await this.handleDMMessage(event.payload as DirectMessage, fromPeerId);
         break;
@@ -1129,16 +1140,19 @@ export class P2PNetwork {
 
   // ==================== HOST MIGRATION ====================
 
-  private initiateHostMigration(): void {
-    const candidates = [this.localPeer.id, ...Array.from(this.connections.keys())
+  private initiateHostMigration(view?: string[]): void {
+    if (this.migrationInProgress) return;
+    this.migrationInProgress = true;
+
+    const candidates = view ?? [this.localPeer.id, ...Array.from(this.connections.keys())
       .filter(id => this.connections.get(id)?.status === 'online')];
-
     candidates.sort();
-    const newHostId = candidates[0];
+    const proposedHostId = candidates[0];
 
-    logger.log('[P2P] Host migration → new host:', newHostId);
+    logger.log('[P2P] Host migration → proposed host:', proposedHostId);
 
-    if (newHostId === this.localPeer.id) {
+    if (proposedHostId === this.localPeer.id) {
+      // Phase 1: Claim — inform all peers of our election
       this.isHost = true;
       this.hostId = this.localPeer.id;
       this.hostConn = null;
@@ -1149,31 +1163,130 @@ export class P2PNetwork {
       });
 
       this.broadcast({
+        type: 'host-claim',
+        payload: { claimantId: this.localPeer.id, proposedHostId, view: candidates },
+        timestamp: Date.now(),
+      });
+
+      // Phase 2: Wait for conflicts (2s). If none, confirm.
+      this.migrationTimeout = setTimeout(() => {
+        this.migrationTimeout = null;
+        if (!this.migrationInProgress) return;
+        this.broadcast({
+          type: 'host-confirmed',
+          payload: { newHostId: this.localPeer.id },
+          timestamp: Date.now(),
+        });
+        this.emitEvent({
+          type: 'host-changed',
+          payload: { newHostId: this.localPeer.id },
+          timestamp: Date.now(),
+        });
+        this.migrationInProgress = false;
+      }, 2000);
+
+      // Store migration context for host-conflict handler
+      this._migrationCandidates = candidates;
+    } else {
+      // Wait for the elected host to claim leadership (3s timeout)
+      this.hostId = proposedHostId;
+      this._migrationCandidates = candidates;
+
+      this.migrationTimeout = setTimeout(() => {
+        this.migrationTimeout = null;
+        if (!this.migrationInProgress) return;
+        // No claim from expected host — re-elect with potentially different view
+        this.migrationInProgress = false;
+        this._migrationCandidates = undefined;
+        this.initiateHostMigration();
+      }, 3000);
+    }
+  }
+
+  // Scratchpad for migration state (used by event handlers)
+  private _migrationCandidates: string[] | undefined = undefined;
+
+  private handleHostClaim(payload: { claimantId: string; proposedHostId: string; view: string[] }): void {
+    if (!this.migrationInProgress) return;
+    if (payload.proposedHostId === this.hostId) {
+      // Claim matches our elected host — confirm
+      if (this.migrationTimeout) clearTimeout(this.migrationTimeout);
+      this.migrationTimeout = null;
+      this.migrationInProgress = false;
+      this._migrationCandidates = undefined;
+
+      // Reconnect to the claiming host if needed
+      const entry = this.connections.get(payload.claimantId);
+      if (entry) {
+        this.hostConn = entry.conn;
+        this.bulkHostConn = this.bulkConnections.get(payload.claimantId) || null;
+      } else {
+        this.reconnectToHost(payload.claimantId);
+      }
+
+      this.emitEvent({
         type: 'host-changed',
-        payload: { newHostId: this.localPeer.id },
+        payload: { newHostId: payload.claimantId },
         timestamp: Date.now(),
       });
     } else {
-      this.hostId = newHostId;
-      const entry = this.connections.get(newHostId);
-      if (entry) {
-        this.hostConn = entry.conn;
-        this.bulkHostConn = this.bulkConnections.get(newHostId) || null;
-      } else {
-        // No connection to the new host — re-establish
-        this.reconnectToHost(newHostId);
-      }
-    }
+      // Conflict — we elected a different host
+      if (this.migrationTimeout) clearTimeout(this.migrationTimeout);
+      this.migrationTimeout = null;
+      this.migrationInProgress = false;
 
-    // Only emit locally when the new host is remote (local state when
-    // self-electing is already updated above, and the broadcast covers peers)
-    if (newHostId !== this.localPeer.id) {
-      this.emitEvent({
-        type: 'host-changed',
-        payload: { newHostId },
+      this.broadcast({
+        type: 'host-conflict',
+        payload: {
+          myCandidate: this.hostId,
+          myView: this._migrationCandidates ?? [this.localPeer.id],
+        },
         timestamp: Date.now(),
       });
+      this._migrationCandidates = undefined;
+
+      // Re-elect with union of views
+      const mergedView = Array.from(new Set([
+        ...(this._migrationCandidates ?? [this.localPeer.id]),
+        ...(payload.view ?? []),
+      ]));
+      this.initiateHostMigration(mergedView);
     }
+  }
+
+  private handleHostConflict(payload: { myCandidate: string; myView: string[] }): void {
+    if (!this.migrationInProgress) return;
+    if (this.migrationTimeout) clearTimeout(this.migrationTimeout);
+    this.migrationTimeout = null;
+    this.migrationInProgress = false;
+
+    // Re-elect with union of views
+    const mergedView = Array.from(new Set([
+      ...(this._migrationCandidates ?? [this.localPeer.id]),
+      ...(payload.myView ?? []),
+    ]));
+    this._migrationCandidates = undefined;
+    this.initiateHostMigration(mergedView);
+  }
+
+  private handleHostConfirmed(payload: { newHostId: string }): void {
+    if (this.migrationInProgress) {
+      if (this.migrationTimeout) clearTimeout(this.migrationTimeout);
+      this.migrationTimeout = null;
+      this.migrationInProgress = false;
+      this._migrationCandidates = undefined;
+    }
+
+    this.broadcast({
+      type: 'host-changed',
+      payload,
+      timestamp: Date.now(),
+    });
+    this.emitEvent({
+      type: 'host-changed',
+      payload,
+      timestamp: Date.now(),
+    });
   }
 
   private reconnectToHost(newHostId: string): void {

@@ -92,7 +92,10 @@ export interface P2PEvent {
     | 'yjs-sync'
     | 'yjs-update'
     | 'error'
-    | 'voice-state-changed';
+    | 'voice-state-changed'
+    | 'host-claim'
+    | 'host-conflict'
+    | 'host-confirmed';
   payload: unknown;
   seq?: number;
   timestamp: number;
