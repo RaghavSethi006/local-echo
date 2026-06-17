@@ -419,8 +419,10 @@ export function P2PProvider({ children }: { children: ReactNode }) {
   }, [network, currentServerId]);
 
   // ===== Server customization =====
-  const isCurrentServerHost =
-    !!network && !!currentServerId && network.isServerHost(currentServerId);
+  const isCurrentServerHost = useMemo(
+    () => !!network && !!currentServerId && network.isServerHost(currentServerId),
+    [network, currentServerId]
+  );
 
   const updateCurrentServer = useCallback(
     async (patch: { name?: string; icon?: string; channelOps?: ChannelOp[]; configPatch?: CommunityConfigPatch }) => {
