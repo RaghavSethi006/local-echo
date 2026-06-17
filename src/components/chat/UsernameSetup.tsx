@@ -47,7 +47,7 @@ export function UsernameSetup() {
       <div className="w-full max-w-md space-y-8 animate-in">
         {/* Logo & Title */}
         <div className="text-center space-y-5">
-          <div className="w-20 h-20 mx-auto rounded-3xl gradient-primary flex items-center justify-center shadow-glow animate-float">
+          <div className="w-20 h-20 mx-auto rounded-3xl gradient-primary flex items-center justify-center shadow-glow animate-float text-primary-foreground">
             <OffGridLogo size={36} />
           </div>
           <div>
