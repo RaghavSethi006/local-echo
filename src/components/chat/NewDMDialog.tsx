@@ -10,6 +10,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { getAvatarColor } from '@/lib/avatar-color';
 import { Search, MessageCircle, Users, KeyRound, Send, ScanLine } from 'lucide-react';
 import { PeerId } from '@/types/p2p';
 import { toast } from 'sonner';
@@ -73,21 +74,6 @@ export function NewDMDialog({ open, onOpenChange }: NewDMDialogProps) {
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Failed to start DM');
     }
-  };
-
-  // Generate consistent color based on username
-  const getAvatarColor = (username: string) => {
-    const colors = [
-      'bg-red-500', 'bg-orange-500', 'bg-amber-500', 'bg-yellow-500',
-      'bg-lime-500', 'bg-green-500', 'bg-emerald-500', 'bg-teal-500',
-      'bg-cyan-500', 'bg-sky-500', 'bg-blue-500', 'bg-indigo-500',
-      'bg-violet-500', 'bg-purple-500', 'bg-fuchsia-500', 'bg-pink-500',
-    ];
-    let hash = 0;
-    for (let i = 0; i < username.length; i++) {
-      hash = username.charCodeAt(i) + ((hash << 5) - hash);
-    }
-    return colors[Math.abs(hash) % colors.length];
   };
 
   return (
