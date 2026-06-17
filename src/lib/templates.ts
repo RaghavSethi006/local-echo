@@ -1,11 +1,7 @@
 import type { CommunityConfig, CommunityRole, CreateCommunityInput } from '@/types/community';
-import { TEMPLATE_LABELS, ALL_PERMISSIONS } from '@/types/community';
+import { ALL_PERMISSIONS } from '@/types/community';
 
 export function createDefaultCommunityConfig(input: CreateCommunityInput, ownerId: string): CommunityConfig {
-  const createdAt = Date.now();
-  const templateLabel = TEMPLATE_LABELS[input.template];
-  const publicServer = input.visibility === 'public';
-
   const roles: CommunityRole[] = [
     {
       id: 'owner',
@@ -21,7 +17,7 @@ export function createDefaultCommunityConfig(input: CreateCommunityInput, ownerI
     {
       id: 'admin',
       name: 'Admin',
-      description: 'Manage server settings, roles, channels, bots, and automations',
+      description: 'Manage server settings, roles, and channels',
       color: '#ef4444',
       icon: 'shield',
       position: 80,
@@ -85,127 +81,11 @@ export function createDefaultCommunityConfig(input: CreateCommunityInput, ownerI
 
   return {
     version: 1,
-    template: input.template,
     branding: {
-      description: input.description || `${templateLabel} community on Local Echo`,
+      description: input.description || 'A community on Local Echo',
       icon: input.icon,
-      bannerUrl: input.bannerUrl,
-      accentColor: '#22c55e',
-      gradientFrom: '#0f172a',
-      gradientTo: '#14532d',
-      welcomeTitle: `Welcome to ${input.name}`,
-      welcomeMessage: input.aiSetupEnabled
-        ? `This ${templateLabel.toLowerCase()} space was set up with recommended channels, roles, safety defaults, and onboarding.`
-        : 'Read the rules, introduce yourself, and make yourself at home.',
-      inviteSplash: `Join ${input.name} on Local Echo.`,
-    },
-    discovery: {
-      visibility: input.visibility,
-      tags: input.tags,
-      language: input.language,
-      region: input.region,
-      allowDiscovery: input.visibility === 'public',
-    },
-    invites: {
-      defaultExpiryHours: publicServer ? 24 : 168,
-      maxUses: publicServer ? 100 : 25,
-      allowMemberInvites: !publicServer,
-      requireApproval: publicServer,
-      trackAnalytics: true,
-    },
-    onboarding: {
-      enabled: input.onboardingTemplate !== 'none',
-      template: input.onboardingTemplate,
-      rules: [
-        'Be respectful and constructive.',
-        'No spam, scams, harassment, or hate speech.',
-        'Keep discussions in the right channels.',
-      ],
-      starterPrompt: 'Introduce yourself and tell everyone what brought you here.',
-      assignRoleOnComplete: 'member',
     },
     roles,
     permissionOverwrites: [],
-    moderation: {
-      verificationLevel: publicServer ? 'medium' : 'low',
-      spamDetection: true,
-      raidDetection: publicServer,
-      scamDetection: true,
-      phishingDetection: true,
-      nsfwDetection: publicServer,
-      hateSpeechFilter: true,
-      toxicityScoring: publicServer,
-      duplicateMessageDetection: true,
-      antiMassMention: true,
-      quarantineNewMembers: publicServer,
-      trustScoreEnabled: true,
-      emergencyLockdown: false,
-      panicMode: false,
-    },
-    automodRules: [
-      { id: 'spam-rule', name: 'Spam shield', enabled: true, trigger: 'spam', threshold: 5, action: 'timeout' },
-      { id: 'mentions-rule', name: 'Mass mention guard', enabled: true, trigger: 'mass-mention', threshold: 6, action: 'delete-message' },
-      { id: 'scam-rule', name: 'Suspicious link review', enabled: true, trigger: 'link', threshold: 1, action: 'notify-mods' },
-    ],
-    automations: [
-      {
-        id: 'welcome-flow',
-        name: 'Welcome new members',
-        enabled: true,
-        trigger: 'member-joins',
-        condition: 'Always',
-        action: 'send-message',
-        description: 'Posts a welcome message and points newcomers to onboarding.',
-      },
-      {
-        id: 'trusted-role-flow',
-        name: 'Unlock trusted member role',
-        enabled: input.aiSetupEnabled,
-        trigger: 'level-reached',
-        condition: 'Level >= 10 and no active strikes',
-        action: 'assign-role',
-        description: 'Promotes healthy long-term members into a trusted role.',
-      },
-    ],
-    analytics: {
-      enabled: true,
-      retentionDays: publicServer ? 90 : 30,
-      trackMessageActivity: true,
-      trackVoiceActivity: true,
-      trackModerationStats: true,
-      aiInsights: input.aiSetupEnabled,
-    },
-    integrations: {
-      botsEnabled: true,
-      pluginsEnabled: true,
-      webhooksEnabled: true,
-      githubEnabled: input.template === 'developer' || input.template === 'startup',
-      pluginSandboxRequired: true,
-      marketplaceEnabled: input.visibility === 'public',
-    },
-    monetization: {
-      enabled: false,
-      premiumMemberships: false,
-      paidRoles: false,
-      donations: input.template === 'creator-community',
-      ticketedChannels: false,
-      supporterBadges: input.template === 'creator-community',
-    },
-    backups: {
-      enabled: false,
-      encrypted: true,
-      retentionDays: 30,
-      includeAuditLogs: true,
-    },
-    auditLog: [
-      {
-        id: `audit-${createdAt}`,
-        actorId: ownerId,
-        action: 'community.created',
-        target: input.name,
-        reason: `Created from ${templateLabel} template`,
-        timestamp: createdAt,
-      },
-    ],
   };
 }

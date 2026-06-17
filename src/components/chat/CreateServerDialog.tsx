@@ -17,7 +17,6 @@ import { toast } from 'sonner';
 import { Loader2, Server, Sparkles } from 'lucide-react';
 import {
   getTemplateChannels,
-  TEMPLATE_LABELS,
   type CreateCommunityInput,
   type ServerTemplateId,
   type ServerVisibility,
@@ -28,22 +27,16 @@ interface CreateServerDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
-const templateIds = Object.keys(TEMPLATE_LABELS) as ServerTemplateId[];
+const templateIds: ServerTemplateId[] = ['gaming', 'developer', 'study', 'startup', 'ai-community', 'creator-community', 'enterprise-workspace', 'minimal', 'custom'];
 const iconPresets = ['💬', '🚀', '🎮', '📚', '🤖', '🎨', '🏢', '✨'];
 
 export function CreateServerDialog({ open, onOpenChange }: CreateServerDialogProps) {
   const { createServer } = useP2P();
   const [serverName, setServerName] = useState('');
   const [description, setDescription] = useState('');
-  const [tags, setTags] = useState('');
   const [icon, setIcon] = useState(iconPresets[0]);
-  const [bannerUrl, setBannerUrl] = useState('');
   const [template, setTemplate] = useState<ServerTemplateId>('gaming');
   const [visibility, setVisibility] = useState<ServerVisibility>('private');
-  const [region, setRegion] = useState('auto');
-  const [language, setLanguage] = useState('en');
-  const [onboardingTemplate, setOnboardingTemplate] = useState<CreateCommunityInput['onboardingTemplate']>('rules');
-  const [aiSetupEnabled, setAiSetupEnabled] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
 
   const previewChannels = useMemo(() => getTemplateChannels(template), [template]);
@@ -57,25 +50,17 @@ export function CreateServerDialog({ open, onOpenChange }: CreateServerDialogPro
     const input: CreateCommunityInput = {
       name: serverName.trim(),
       icon,
-      bannerUrl: bannerUrl.trim() || undefined,
       description: description.trim() || undefined,
-      tags: tags.split(',').map(tag => tag.trim()).filter(Boolean).slice(0, 8),
       visibility,
       template,
-      region,
-      language,
-      onboardingTemplate,
-      aiSetupEnabled,
     };
 
     setIsCreating(true);
     try {
       await createServer(input);
-      toast.success(`Server "${serverName}" created with ${TEMPLATE_LABELS[template]} systems`);
+      toast.success(`Server "${serverName}" created`);
       setServerName('');
       setDescription('');
-      setTags('');
-      setBannerUrl('');
       onOpenChange(false);
     } catch {
       toast.error('Failed to create server');
@@ -148,7 +133,7 @@ export function CreateServerDialog({ open, onOpenChange }: CreateServerDialogPro
                   className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
                 >
                   {templateIds.map(id => (
-                    <option key={id} value={id}>{TEMPLATE_LABELS[id]}</option>
+                    <option key={id} value={id}>{id.charAt(0).toUpperCase() + id.slice(1).replace(/-/g, ' ')}</option>
                   ))}
                 </select>
               </div>
@@ -161,94 +146,15 @@ export function CreateServerDialog({ open, onOpenChange }: CreateServerDialogPro
                 >
                   <option value="private">Private</option>
                   <option value="unlisted">Unlisted</option>
-                  <option value="public">Public discovery-ready</option>
+                  <option value="public">Public</option>
                 </select>
-              </div>
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label>Region</Label>
-                <select
-                  value={region}
-                  onChange={(e) => setRegion(e.target.value)}
-                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                >
-                  <option value="auto">Auto</option>
-                  <option value="na">North America</option>
-                  <option value="eu">Europe</option>
-                  <option value="me">Middle East</option>
-                  <option value="apac">Asia Pacific</option>
-                </select>
-              </div>
-              <div className="space-y-2">
-                <Label>Language</Label>
-                <select
-                  value={language}
-                  onChange={(e) => setLanguage(e.target.value)}
-                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                >
-                  <option value="en">English</option>
-                  <option value="es">Spanish</option>
-                  <option value="fr">French</option>
-                  <option value="ar">Arabic</option>
-                  <option value="hi">Hindi</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="tags">Tags/categories</Label>
-              <Input
-                id="tags"
-                value={tags}
-                onChange={(e) => setTags(e.target.value)}
-                placeholder="gaming, valorant, ranked"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="bannerUrl">Banner image URL</Label>
-              <Input
-                id="bannerUrl"
-                value={bannerUrl}
-                onChange={(e) => setBannerUrl(e.target.value)}
-                placeholder="Optional banner or animated banner URL"
-              />
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label>Onboarding</Label>
-                <select
-                  value={onboardingTemplate}
-                  onChange={(e) => setOnboardingTemplate(e.target.value as CreateCommunityInput['onboardingTemplate'])}
-                  className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                >
-                  <option value="none">None</option>
-                  <option value="rules">Rules acknowledgement</option>
-                  <option value="questionnaire">Questionnaire</option>
-                  <option value="verification">Verification</option>
-                  <option value="guided-tour">Guided tour</option>
-                </select>
-              </div>
-              <div className="flex items-center justify-between rounded-lg border border-border p-3">
-                <div>
-                  <Label className="flex items-center gap-2">
-                    <Sparkles className="h-4 w-4" />
-                    AI setup
-                  </Label>
-                  <p className="text-xs text-muted-foreground">Suggest roles, rules, automod, and workflows.</p>
-                </div>
-                <Switch checked={aiSetupEnabled} onCheckedChange={setAiSetupEnabled} />
               </div>
             </div>
           </div>
 
           <div className="space-y-3 rounded-xl border border-border bg-secondary/30 p-4">
             <div>
-              <p className="text-sm font-medium">Template preview</p>
-              <p className="text-xs text-muted-foreground">{TEMPLATE_LABELS[template]} starter structure</p>
+              <p className="text-sm font-medium">Template channels</p>
             </div>
             <div className="flex flex-wrap gap-1.5">
               {previewChannels.map(channel => (
@@ -258,14 +164,12 @@ export function CreateServerDialog({ open, onOpenChange }: CreateServerDialogPro
               ))}
             </div>
             <div className="rounded-lg border border-border bg-background p-3 text-xs text-muted-foreground">
-              <p className="font-medium text-foreground">Generated systems</p>
-              <p>Owner, Admin, Moderator, Member, and Newcomer roles.</p>
-              <p>Spam shield, mass mention guard, suspicious link review.</p>
-              <p>Welcome automation, analytics settings, invite policy, and safety defaults.</p>
+              <p className="font-medium text-foreground">Default roles</p>
+              <p>Owner, Admin, Moderator, Member, and Newcomer roles are created automatically.</p>
             </div>
             <div className="rounded-lg border border-border bg-background p-3 text-xs text-muted-foreground">
               <p className="font-medium text-foreground">P2P note</p>
-              <p>This community still runs locally through the current host and syncs settings to connected peers.</p>
+              <p>This community runs locally through the current host and syncs settings to connected peers.</p>
             </div>
           </div>
         </div>

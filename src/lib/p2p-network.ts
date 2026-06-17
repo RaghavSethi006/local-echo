@@ -302,16 +302,7 @@ export class P2PNetwork {
 
   async createServer(input: string | CreateCommunityInput): Promise<Server> {
     const createInput: CreateCommunityInput = typeof input === 'string'
-      ? {
-          name: input,
-          tags: [],
-          visibility: 'private',
-          template: 'custom',
-          region: 'auto',
-          language: 'en',
-          onboardingTemplate: 'none',
-          aiSetupEnabled: false,
-        }
+      ? { name: input, visibility: 'private', template: 'custom' }
       : input;
     const channels = getTemplateChannels(createInput.template);
     const server: Server = {
@@ -385,31 +376,15 @@ export class P2PNetwork {
   ): NonNullable<Server['config']> {
     const fallbackInput: CreateCommunityInput = {
       name: server?.name || 'Community',
-      tags: [],
       visibility: 'private',
       template: 'custom',
-      region: 'auto',
-      language: 'en',
-      onboardingTemplate: 'none',
-      aiSetupEnabled: false,
     };
     const base = current || createDefaultCommunityConfig(fallbackInput, this.localPeer.id);
     const next = {
       ...base,
       branding: { ...base.branding, ...patch.branding },
-      discovery: { ...base.discovery, ...patch.discovery },
-      invites: { ...base.invites, ...patch.invites },
-      onboarding: { ...base.onboarding, ...patch.onboarding },
-      moderation: { ...base.moderation, ...patch.moderation },
-      analytics: { ...base.analytics, ...patch.analytics },
-      integrations: { ...base.integrations, ...patch.integrations },
-      monetization: { ...base.monetization, ...patch.monetization },
-      backups: { ...base.backups, ...patch.backups },
       roles: patch.roles || base.roles,
       permissionOverwrites: patch.permissionOverwrites || base.permissionOverwrites,
-      automodRules: patch.automodRules || base.automodRules,
-      automations: patch.automations || base.automations,
-      auditLog: patch.auditLogEntry ? [patch.auditLogEntry, ...base.auditLog].slice(0, 250) : base.auditLog,
       version: base.version + 1,
     };
     return next;
@@ -1953,16 +1928,7 @@ export class P2PNetwork {
           // Back-fill config for servers created before the community system
           if (!restoredServer.config) {
             restoredServer.config = createDefaultCommunityConfig(
-              {
-                name: s.name,
-                tags: [],
-                visibility: 'private',
-                template: 'custom',
-                region: 'auto',
-                language: 'en',
-                onboardingTemplate: 'none',
-                aiSetupEnabled: false,
-              },
+              { name: s.name, visibility: 'private', template: 'custom' },
               s.hostId
             );
           }

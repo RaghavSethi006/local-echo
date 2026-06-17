@@ -71,168 +71,27 @@ export interface PermissionOverwrite {
 export interface BrandingSettings {
   description: string;
   icon?: string;
-  bannerUrl?: string;
-  accentColor: string;
-  gradientFrom: string;
-  gradientTo: string;
-  wallpaperUrl?: string;
-  welcomeTitle: string;
-  welcomeMessage: string;
-  inviteSplash: string;
-}
-
-export interface DiscoverySettings {
-  visibility: ServerVisibility;
-  tags: string[];
-  language: string;
-  region: string;
-  allowDiscovery: boolean;
-  vanitySlug?: string;
-}
-
-export interface InviteSettings {
-  defaultExpiryHours: number;
-  maxUses: number;
-  allowMemberInvites: boolean;
-  requireApproval: boolean;
-  trackAnalytics: boolean;
-}
-
-export interface OnboardingSettings {
-  enabled: boolean;
-  template: 'none' | 'rules' | 'questionnaire' | 'verification' | 'guided-tour';
-  rules: string[];
-  starterPrompt: string;
-  assignRoleOnComplete?: string;
-}
-
-export interface ModerationSettings {
-  verificationLevel: 'none' | 'low' | 'medium' | 'high' | 'strict';
-  spamDetection: boolean;
-  raidDetection: boolean;
-  scamDetection: boolean;
-  phishingDetection: boolean;
-  nsfwDetection: boolean;
-  hateSpeechFilter: boolean;
-  toxicityScoring: boolean;
-  duplicateMessageDetection: boolean;
-  antiMassMention: boolean;
-  quarantineNewMembers: boolean;
-  trustScoreEnabled: boolean;
-  emergencyLockdown: boolean;
-  panicMode: boolean;
-}
-
-export interface AutoModRule {
-  id: string;
-  name: string;
-  enabled: boolean;
-  trigger: 'spam' | 'mass-mention' | 'keyword' | 'link' | 'toxicity' | 'raid';
-  threshold: number;
-  action: 'notify-mods' | 'delete-message' | 'timeout' | 'quarantine' | 'ban';
-}
-
-export interface AutomationWorkflow {
-  id: string;
-  name: string;
-  enabled: boolean;
-  trigger: 'member-joins' | 'message-created' | 'reaction-added' | 'level-reached' | 'stream-starts';
-  condition: string;
-  action: 'assign-role' | 'send-message' | 'create-thread' | 'alert-mods' | 'call-webhook' | 'trigger-ai-agent';
-  description: string;
-}
-
-export interface AnalyticsSettings {
-  enabled: boolean;
-  retentionDays: number;
-  trackMessageActivity: boolean;
-  trackVoiceActivity: boolean;
-  trackModerationStats: boolean;
-  aiInsights: boolean;
-}
-
-export interface IntegrationSettings {
-  botsEnabled: boolean;
-  pluginsEnabled: boolean;
-  webhooksEnabled: boolean;
-  githubEnabled: boolean;
-  pluginSandboxRequired: boolean;
-  marketplaceEnabled: boolean;
-}
-
-export interface MonetizationSettings {
-  enabled: boolean;
-  premiumMemberships: boolean;
-  paidRoles: boolean;
-  donations: boolean;
-  ticketedChannels: boolean;
-  supporterBadges: boolean;
-}
-
-export interface BackupSettings {
-  enabled: boolean;
-  encrypted: boolean;
-  retentionDays: number;
-  includeAuditLogs: boolean;
-}
-
-export interface AuditLogEntry {
-  id: string;
-  actorId: string;
-  action: string;
-  target: string;
-  reason?: string;
-  timestamp: number;
 }
 
 export interface CommunityConfig {
   version: number;
-  template: ServerTemplateId;
   branding: BrandingSettings;
-  discovery: DiscoverySettings;
-  invites: InviteSettings;
-  onboarding: OnboardingSettings;
   roles: CommunityRole[];
   permissionOverwrites: PermissionOverwrite[];
-  moderation: ModerationSettings;
-  automodRules: AutoModRule[];
-  automations: AutomationWorkflow[];
-  analytics: AnalyticsSettings;
-  integrations: IntegrationSettings;
-  monetization: MonetizationSettings;
-  backups: BackupSettings;
-  auditLog: AuditLogEntry[];
 }
 
 export interface CreateCommunityInput {
   name: string;
   icon?: string;
-  bannerUrl?: string;
   description?: string;
-  tags: string[];
   visibility: ServerVisibility;
   template: ServerTemplateId;
-  region: string;
-  language: string;
-  onboardingTemplate: OnboardingSettings['template'];
-  aiSetupEnabled: boolean;
 }
 
 export type CommunityConfigPatch = Partial<{
   branding: Partial<BrandingSettings>;
-  discovery: Partial<DiscoverySettings>;
-  invites: Partial<InviteSettings>;
-  onboarding: Partial<OnboardingSettings>;
   roles: CommunityRole[];
   permissionOverwrites: PermissionOverwrite[];
-  moderation: Partial<ModerationSettings>;
-  automodRules: AutoModRule[];
-  automations: AutomationWorkflow[];
-  analytics: Partial<AnalyticsSettings>;
-  integrations: Partial<IntegrationSettings>;
-  monetization: Partial<MonetizationSettings>;
-  backups: Partial<BackupSettings>;
-  auditLogEntry: AuditLogEntry;
 }>;
 
 export const ALL_PERMISSIONS: PermissionFlag[] = [
@@ -266,18 +125,6 @@ export const ALL_PERMISSIONS: PermissionFlag[] = [
   'manage_monetization',
   'export_data',
 ];
-
-export const TEMPLATE_LABELS: Record<ServerTemplateId, string> = {
-  gaming: 'Gaming',
-  developer: 'Developer',
-  study: 'Study',
-  startup: 'Startup',
-  'ai-community': 'AI Community',
-  'creator-community': 'Creator Community',
-  'enterprise-workspace': 'Enterprise Workspace',
-  minimal: 'Minimal',
-  custom: 'Custom',
-};
 
 const channelTemplates: Record<ServerTemplateId, Channel[]> = {
   gaming: [

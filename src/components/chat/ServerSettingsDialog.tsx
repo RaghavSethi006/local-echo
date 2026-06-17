@@ -14,39 +14,27 @@ import { Textarea } from '@/components/ui/textarea';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
-import { Field, ToggleRow, Metric, RoadmapBanner } from './SettingsHelper';
+import { Metric } from './SettingsHelper';
 import {
-  BarChart3,
-  Bot,
   Check,
-  Coins,
   Hash,
   Loader2,
-  Lock,
   Pencil,
   Plus,
   ShieldAlert,
   SlidersHorizontal,
   Trash2,
   UserCog,
-  Workflow,
   X,
   LogOut,
 } from 'lucide-react';
 import { ChannelOp, Channel } from '@/types/p2p';
 import { createDefaultCommunityConfig } from '@/lib/templates';
 import {
-  TEMPLATE_LABELS,
-  type AutoModRule,
-  type AutomationWorkflow,
   type CommunityConfig,
-
-  type ModerationSettings,
   type PermissionFlag,
-  type ServerVisibility,
 } from '@/types/community';
 
 const PRESET_ICONS = ['💬', '🚀', '🌌', '🎮', '🎨', '🔥', '⚡', '🌿', '🪐', '🛰️', '🦊', '🐙', '🍕', '☕', '🎧'];
@@ -246,35 +234,6 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     });
   };
 
-  const addAutomodRule = () => {
-    const rule: AutoModRule = {
-      id: `rule-${Date.now()}`,
-      name: 'Keyword escalation',
-      enabled: true,
-      trigger: 'keyword',
-      threshold: 1,
-      action: 'notify-mods',
-    };
-    markConfig(draft => {
-      draft.automodRules.unshift(rule);
-    });
-  };
-
-  const addAutomation = () => {
-    const workflow: AutomationWorkflow = {
-      id: `workflow-${Date.now()}`,
-      name: 'Notify moderators',
-      enabled: true,
-      trigger: 'message-created',
-      condition: 'Message contains watched keyword',
-      action: 'alert-mods',
-      description: 'Alerts moderators when a watched keyword appears.',
-    };
-    markConfig(draft => {
-      draft.automations.unshift(workflow);
-    });
-  };
-
   const hasChanges =
     name.trim() !== currentServer.name ||
     icon !== (currentServer.icon || '') ||
@@ -291,26 +250,8 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         channelOps: pendingOps,
         configPatch: {
           branding: { ...config.branding, icon },
-          discovery: config.discovery,
-          invites: config.invites,
-          onboarding: config.onboarding,
           roles: config.roles,
           permissionOverwrites: config.permissionOverwrites,
-          moderation: config.moderation,
-          automodRules: config.automodRules,
-          automations: config.automations,
-          analytics: config.analytics,
-          integrations: config.integrations,
-          monetization: config.monetization,
-          backups: config.backups,
-          auditLogEntry: {
-            id: `audit-${Date.now()}`,
-            actorId: localPeer?.id || 'local',
-            action: 'community.settings_updated',
-            target: currentServer.name,
-            reason: 'Saved from server management dashboard',
-            timestamp: Date.now(),
-          },
         },
       });
       toast.success('Server management settings saved');
@@ -342,7 +283,6 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
   };
 
   const sectionClass = 'space-y-4';
-  const templateName = TEMPLATE_LABELS[config.template];
 
   return (
     <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) setConfirmingDestructive(false); }}>
@@ -354,7 +294,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
           </DialogTitle>
           <DialogDescription>
             {isCurrentServerHost
-              ? `Manage ${templateName} community systems. Changes sync to connected peers.`
+              ? 'Manage server settings. Changes sync to connected peers.'
               : 'You are a member. You can inspect settings but cannot edit them.'}
           </DialogDescription>
         </DialogHeader>
@@ -363,22 +303,16 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
           <Tabs defaultValue="overview" className="space-y-4">
             <TabsList className="flex h-auto flex-wrap justify-start">
               <TabsTrigger value="overview">Overview</TabsTrigger>
-              <TabsTrigger value="branding">Branding</TabsTrigger>
               <TabsTrigger value="roles">Roles</TabsTrigger>
               <TabsTrigger value="channels">Channels</TabsTrigger>
-              <TabsTrigger value="moderation">Moderation 🗺️</TabsTrigger>
-              <TabsTrigger value="automation">Automation 🗺️</TabsTrigger>
-              <TabsTrigger value="analytics">Analytics 🗺️</TabsTrigger>
-              <TabsTrigger value="integrations">Integrations 🗺️</TabsTrigger>
-              <TabsTrigger value="audit">Audit</TabsTrigger>
             </TabsList>
 
             <TabsContent value="overview" className={sectionClass}>
               <div className="grid gap-4 lg:grid-cols-3">
                 <Card className="lg:col-span-2">
                   <CardHeader>
-                    <CardTitle>Community Overview</CardTitle>
-                    <CardDescription>Identity, discoverability, region, language, and invite behavior.</CardDescription>
+                    <CardTitle>Server Overview</CardTitle>
+                    <CardDescription>Identity and description.</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="grid gap-3 sm:grid-cols-[100px_1fr]">
@@ -412,78 +346,19 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                         </div>
                       </div>
                     </div>
-                    <div className="grid gap-3 sm:grid-cols-3">
-                      <div className="space-y-2">
-                        <Label>Visibility</Label>
-                        <select
-                          value={config.discovery.visibility}
-                          onChange={e => markConfig(d => { d.discovery.visibility = e.target.value as ServerVisibility; d.discovery.allowDiscovery = e.target.value === 'public'; })}
-                          className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                        >
-                          <option value="private">Private</option>
-                          <option value="unlisted">Unlisted</option>
-                          <option value="public">Public</option>
-                        </select>
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Region</Label>
-                        <Input value={config.discovery.region} onChange={e => markConfig(d => { d.discovery.region = e.target.value; })} />
-                      </div>
-                      <div className="space-y-2">
-                        <Label>Language</Label>
-                        <Input value={config.discovery.language} onChange={e => markConfig(d => { d.discovery.language = e.target.value; })} />
-                      </div>
-                    </div>
-                    <div className="space-y-2">
-                      <Label>Tags</Label>
-                      <Input
-                        value={config.discovery.tags.join(', ')}
-                        onChange={e => markConfig(d => { d.discovery.tags = e.target.value.split(',').map(t => t.trim()).filter(Boolean); })}
-                        placeholder="gaming, ai, study"
-                      />
-                    </div>
                   </CardContent>
                 </Card>
 
                 <Card>
                   <CardHeader>
                     <CardTitle>System Snapshot</CardTitle>
-                    <CardDescription>Live community infrastructure status.</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-3 text-sm">
                     <Metric label="Roles" value={config.roles.length} />
                     <Metric label="Channels" value={displayedChannels.length} />
-                    <Metric label="Automod rules" value={config.automodRules.length} />
-                    <Metric label="Automations" value={config.automations.length} />
-                    <Metric label="Audit events" value={config.auditLog.length} />
                   </CardContent>
                 </Card>
               </div>
-            </TabsContent>
-
-            <TabsContent value="branding" className={sectionClass}>
-              <Card>
-                <CardHeader>
-                  <CardTitle>Branding And Customization</CardTitle>
-                  <CardDescription>Welcome pages, invite splash, banners, gradients, and accent colors.</CardDescription>
-                </CardHeader>
-                <CardContent className="grid gap-4 lg:grid-cols-2">
-                  <Field label="Banner URL" value={config.branding.bannerUrl || ''} onChange={value => markConfig(d => { d.branding.bannerUrl = value; })} />
-                  <Field label="Wallpaper URL" value={config.branding.wallpaperUrl || ''} onChange={value => markConfig(d => { d.branding.wallpaperUrl = value; })} />
-                  <Field label="Accent color" value={config.branding.accentColor} onChange={value => markConfig(d => { d.branding.accentColor = value; })} />
-                  <Field label="Gradient from" value={config.branding.gradientFrom} onChange={value => markConfig(d => { d.branding.gradientFrom = value; })} />
-                  <Field label="Gradient to" value={config.branding.gradientTo} onChange={value => markConfig(d => { d.branding.gradientTo = value; })} />
-                  <Field label="Welcome title" value={config.branding.welcomeTitle} onChange={value => markConfig(d => { d.branding.welcomeTitle = value; })} />
-                  <div className="space-y-2 lg:col-span-2">
-                    <Label>Welcome message</Label>
-                    <Textarea value={config.branding.welcomeMessage} onChange={e => markConfig(d => { d.branding.welcomeMessage = e.target.value; })} rows={3} />
-                  </div>
-                  <div className="space-y-2 lg:col-span-2">
-                    <Label>Invite splash text</Label>
-                    <Textarea value={config.branding.inviteSplash} onChange={e => markConfig(d => { d.branding.inviteSplash = e.target.value; })} rows={2} />
-                  </div>
-                </CardContent>
-              </Card>
             </TabsContent>
 
             <TabsContent value="roles" className={sectionClass}>
@@ -587,170 +462,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
               </Card>
             </TabsContent>
 
-            <TabsContent value="moderation" className={sectionClass}>
-              <RoadmapBanner feature="Moderation" />
-              <div className="grid gap-4 lg:grid-cols-2">
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2"><ShieldAlert className="h-5 w-5" /> Safety Controls</CardTitle>
-                    <CardDescription>Manual and automatic moderation switches.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="space-y-2">
-                      <Label>Verification level</Label>
-                      <select
-                        value={config.moderation.verificationLevel}
-                        onChange={e => markConfig(d => { d.moderation.verificationLevel = e.target.value as ModerationSettings['verificationLevel']; })}
-                        className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                      >
-                        <option value="none">None</option>
-                        <option value="low">Low</option>
-                        <option value="medium">Medium</option>
-                        <option value="high">High</option>
-                        <option value="strict">Strict</option>
-                      </select>
-                    </div>
-                    {Object.entries(config.moderation).filter(([key]) => key !== 'verificationLevel').map(([key, value]) => (
-                      <ToggleRow
-                        key={key}
-                        label={key.replace(/([A-Z])/g, ' $1')}
-                        checked={Boolean(value)}
-                        onCheckedChange={checked => markConfig(d => { (d.moderation as Record<string, unknown>)[key] = checked; })}
-                      />
-                    ))}
-                  </CardContent>
-                </Card>
 
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Auto Moderation Rules</CardTitle>
-                    <CardDescription>Spam, raid, scam, mass mention, keyword, and AI risk actions.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <Button type="button" variant="outline" onClick={addAutomodRule}><Plus className="mr-2 h-4 w-4" /> Add rule</Button>
-                    {config.automodRules.map(rule => (
-                      <div key={rule.id} className="rounded-lg border border-border p-3">
-                        <div className="flex items-center justify-between gap-3">
-                          <Input value={rule.name} onChange={e => markConfig(d => { const r = d.automodRules.find(item => item.id === rule.id); if (r) r.name = e.target.value; })} />
-                          <Switch checked={rule.enabled} onCheckedChange={checked => markConfig(d => { const r = d.automodRules.find(item => item.id === rule.id); if (r) r.enabled = checked; })} />
-                        </div>
-                        <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                          <Badge variant="secondary">{rule.trigger}</Badge>
-                          <Badge variant="outline">threshold {rule.threshold}</Badge>
-                          <Badge variant="outline">{rule.action}</Badge>
-                        </div>
-                      </div>
-                    ))}
-                  </CardContent>
-                </Card>
-              </div>
-            </TabsContent>
-
-            <TabsContent value="automation" className={sectionClass}>
-              <RoadmapBanner feature="Automation" />
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2"><Workflow className="h-5 w-5" /> Automation Builder</CardTitle>
-                  <CardDescription>No-code workflows with triggers, conditions, and actions.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <Button type="button" variant="outline" onClick={addAutomation}><Plus className="mr-2 h-4 w-4" /> Add workflow</Button>
-                  {config.automations.map(workflow => (
-                    <div key={workflow.id} className="rounded-lg border border-border p-3">
-                      <div className="flex items-center justify-between gap-3">
-                        <Input value={workflow.name} onChange={e => markConfig(d => { const w = d.automations.find(item => item.id === workflow.id); if (w) w.name = e.target.value; })} />
-                        <Switch checked={workflow.enabled} onCheckedChange={checked => markConfig(d => { const w = d.automations.find(item => item.id === workflow.id); if (w) w.enabled = checked; })} />
-                      </div>
-                      <p className="mt-2 text-sm text-muted-foreground">{workflow.description}</p>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        <Badge>{workflow.trigger}</Badge>
-                        <Badge variant="outline">{workflow.condition}</Badge>
-                        <Badge variant="secondary">{workflow.action}</Badge>
-                      </div>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="analytics" className={sectionClass}>
-              <RoadmapBanner feature="Analytics" />
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2"><BarChart3 className="h-5 w-5" /> Analytics And Insights</CardTitle>
-                  <CardDescription>Engagement, moderation, retention, channel activity, and AI health signals.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  {Object.entries(config.analytics).filter(([key]) => key !== 'retentionDays').map(([key, value]) => (
-                    <ToggleRow key={key} label={key.replace(/([A-Z])/g, ' $1')} checked={Boolean(value)} onCheckedChange={checked => markConfig(d => { (d.analytics as Record<string, unknown>)[key] = checked; })} />
-                  ))}
-                  <Field label="Retention days" value={String(config.analytics.retentionDays)} onChange={value => markConfig(d => { d.analytics.retentionDays = Number(value) || 30; })} />
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            <TabsContent value="integrations" className={sectionClass}>
-              <RoadmapBanner feature="Integrations, Monetization and Backups" />
-              <div className="grid gap-4 lg:grid-cols-2">
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2"><Bot className="h-5 w-5" /> Bots, Plugins, Webhooks</CardTitle>
-                    <CardDescription>Extension ecosystem controls and sandbox requirements.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    {Object.entries(config.integrations).map(([key, value]) => (
-                      <ToggleRow key={key} label={key.replace(/([A-Z])/g, ' $1')} checked={Boolean(value)} onCheckedChange={checked => markConfig(d => { (d.integrations as Record<string, unknown>)[key] = checked; })} />
-                    ))}
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2"><Coins className="h-5 w-5" /> Monetization</CardTitle>
-                    <CardDescription>Premium roles, donations, ticketed channels, and supporter tooling.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    {Object.entries(config.monetization).map(([key, value]) => (
-                      <ToggleRow key={key} label={key.replace(/([A-Z])/g, ' $1')} checked={Boolean(value)} onCheckedChange={checked => markConfig(d => { (d.monetization as Record<string, unknown>)[key] = checked; })} />
-                    ))}
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2"><Lock className="h-5 w-5" /> Backups</CardTitle>
-                    <CardDescription>Encrypted backup policy for future hybrid deployments.</CardDescription>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <ToggleRow label="Enabled" checked={config.backups.enabled} onCheckedChange={checked => markConfig(d => { d.backups.enabled = checked; })} />
-                    <ToggleRow label="Encrypted" checked={config.backups.encrypted} onCheckedChange={checked => markConfig(d => { d.backups.encrypted = checked; })} />
-                    <ToggleRow label="Include audit logs" checked={config.backups.includeAuditLogs} onCheckedChange={checked => markConfig(d => { d.backups.includeAuditLogs = checked; })} />
-                    <Field label="Retention days" value={String(config.backups.retentionDays)} onChange={value => markConfig(d => { d.backups.retentionDays = Number(value) || 30; })} />
-                  </CardContent>
-                </Card>
-              </div>
-            </TabsContent>
-
-            <TabsContent value="audit" className={sectionClass}>
-              <Card>
-                <CardHeader>
-                  <CardTitle>Audit Logs</CardTitle>
-                  <CardDescription>Signed-style local admin history for settings and management actions.</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {config.auditLog.length === 0 ? (
-                    <p className="text-sm text-muted-foreground">No audit events yet.</p>
-                  ) : config.auditLog.map(entry => (
-                    <div key={entry.id} className="rounded-lg border border-border p-3 text-sm">
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="font-medium">{entry.action}</span>
-                        <span className="text-xs text-muted-foreground">{new Date(entry.timestamp).toLocaleString()}</span>
-                      </div>
-                      <p className="text-muted-foreground">{entry.reason || 'No reason provided'}</p>
-                      <p className="text-xs text-muted-foreground">Actor: {entry.actorId} / Target: {entry.target}</p>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-            </TabsContent>
           </Tabs>
         </fieldset>
 
