@@ -25,25 +25,22 @@ export function InviteQRDialog({ open, onOpenChange }: InviteQRDialogProps) {
 
   useEffect(() => {
     if (!open) return;
-    (async () => {
-      setLoading(true);
-      try {
-        const code = await generateInvite();
-        setInviteCode(code);
-        if (canvasRef.current) {
-          await QRCode.toCanvas(canvasRef.current, code, {
-            width: 280,
-            margin: 2,
-            color: { dark: '#000', light: '#fff' },
-          });
-        }
-      } catch {
-        toast.error('Failed to generate invite');
-      } finally {
-        setLoading(false);
-      }
-    })();
+    setLoading(true);
+    setInviteCode('');
+    generateInvite()
+      .then(setInviteCode)
+      .catch(() => toast.error('Failed to generate invite'))
+      .finally(() => setLoading(false));
   }, [open, generateInvite]);
+
+  useEffect(() => {
+    if (!inviteCode || loading || !canvasRef.current) return;
+    QRCode.toCanvas(canvasRef.current, inviteCode, {
+      width: 280,
+      margin: 2,
+      color: { dark: '#000', light: '#fff' },
+    }).catch(() => toast.error('Failed to render QR code'));
+  }, [inviteCode, loading]);
 
   const handleCopy = async () => {
     try {
