@@ -1,4 +1,4 @@
-// IndexedDB persistence layer for Local Echo
+// IndexedDB persistence layer for OffGrid
 // All data stays local — no cloud, no telemetry
 
 import type { Channel, DirectMessage, PeerId } from '@/types/p2p';

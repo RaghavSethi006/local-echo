@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { Loader2, Shield, Wifi, Lock, Users } from 'lucide-react';
+import { OffGridLogo } from '@/components/brand/OffGridLogo';
 
 export function UsernameSetup() {
   const { initialize, hasStoredIdentity, restoreSession } = useP2P();
@@ -21,7 +22,7 @@ export function UsernameSetup() {
     setIsInitializing(true);
     try {
       await initialize(username.trim());
-      toast.success('Welcome to Local Echo!');
+      toast.success('Welcome to OffGrid!');
     } catch {
       toast.error('Failed to initialize. Please try again.');
     } finally {
@@ -45,14 +46,14 @@ export function UsernameSetup() {
     <div className="min-h-screen bg-background flex items-center justify-center p-4">
       <div className="w-full max-w-md space-y-8 animate-in">
         {/* Logo & Title */}
-        <div className="text-center space-y-4">
+        <div className="text-center space-y-5">
           <div className="w-20 h-20 mx-auto rounded-3xl gradient-primary flex items-center justify-center shadow-glow animate-float">
-            <Wifi className="w-10 h-10 text-primary-foreground" />
+            <OffGridLogo size={36} />
           </div>
           <div>
-            <h1 className="text-3xl font-bold text-gradient">Local Echo</h1>
+            <h1 className="text-3xl font-bold text-gradient">OffGrid</h1>
             <p className="text-muted-foreground mt-2">
-              Private rooms that live close to the people in them
+              P2P communities, off the grid
             </p>
           </div>
         </div>

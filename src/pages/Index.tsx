@@ -17,8 +17,8 @@ const Index = () => {
   return (
     <>
       <Helmet>
-        <title>Local Echo | Private peer-to-peer communities</title>
-        <meta name="description" content="Private peer-to-peer communities with encrypted chat, local-first storage, and no central message server." />
+        <title>OffGrid | P2P communities, off the grid</title>
+        <meta name="description" content="Private peer-to-peer communities with encrypted chat, local-first storage, and no central server." />
       </Helmet>
       <P2PProvider>
         <ChatApp />

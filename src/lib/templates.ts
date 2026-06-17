@@ -82,7 +82,7 @@ export function createDefaultCommunityConfig(input: CreateCommunityInput, ownerI
   return {
     version: 1,
     branding: {
-      description: input.description || 'A community on Local Echo',
+      description: input.description || 'A community on OffGrid',
       icon: input.icon,
     },
     roles,

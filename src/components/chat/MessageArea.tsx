@@ -65,7 +65,7 @@ export function MessageArea() {
               <Hash className="w-10 h-10 text-muted-foreground" />
             </div>
             <div>
-              <h2 className="text-xl font-semibold text-foreground">Welcome to Local Echo</h2>
+              <h2 className="text-xl font-semibold text-foreground">Welcome to OffGrid</h2>
               <p className="text-muted-foreground mt-1">
                 Create or join a server to start chatting
               </p>

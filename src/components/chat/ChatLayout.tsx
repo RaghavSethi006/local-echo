@@ -65,7 +65,7 @@ export function ChatLayout() {
             ? currentDMPeer?.username || 'Direct Messages'
             : currentChannel
             ? `#${currentChannel.name}`
-            : currentServer?.name || 'Local Echo'}
+            : currentServer?.name || 'OffGrid'}
         </div>
         {viewMode === 'servers' && currentServer ? (
           <button
