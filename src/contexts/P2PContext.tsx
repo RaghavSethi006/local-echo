@@ -233,6 +233,7 @@ export function P2PProvider({ children }: { children: ReactNode }) {
             const channelStillValid = updatedServer?.channels.find(c => c.id === channelId);
             const resolvedChannelId = channelStillValid?.id
               ?? updatedServer?.channels.filter(c => c.type === 'text')[0]?.id
+              ?? updatedServer?.channels[0]?.id
               ?? null;
 
             if (resolvedChannelId && resolvedChannelId !== channelId) {
