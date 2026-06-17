@@ -233,8 +233,18 @@ export class P2PNetwork {
         if (this.localStream) {
           call.answer(this.localStream);
           this.voiceConnections.set(call.peer, call);
-          call.on('stream', () => {});
-          call.on('close', () => this.voiceConnections.delete(call.peer));
+          call.on('stream', (remoteStream) => {
+            const audio = new Audio();
+            audio.srcObject = remoteStream;
+            audio.play().catch(() => {});
+            this.voiceAudioElements.set(call.peer, audio);
+          });
+          call.on('close', () => {
+            this.voiceConnections.delete(call.peer);
+            const el = this.voiceAudioElements.get(call.peer);
+            if (el) { el.pause(); el.srcObject = null; }
+            this.voiceAudioElements.delete(call.peer);
+          });
           call.on('error', (err) => logger.error('[P2P Voice] Incoming call error:', err));
         } else {
           call.close();
@@ -1512,6 +1522,7 @@ export class P2PNetwork {
 
   private localStream: MediaStream | null = null;
   private voiceConnections: Map<string, MediaConnection> = new Map();
+  private voiceAudioElements: Map<string, HTMLAudioElement> = new Map();
   private muted = false;
   private activeVoiceChannel: { serverId: string; channelId: string } | null = null;
 
@@ -1553,6 +1564,8 @@ export class P2PNetwork {
   }
 
   async leaveVoiceChannel(): Promise<void> {
+    this.voiceAudioElements.forEach((el) => { el.pause(); el.srcObject = null; });
+    this.voiceAudioElements.clear();
     this.voiceConnections.forEach(conn => conn.close());
     this.voiceConnections.clear();
 
@@ -1577,8 +1590,18 @@ export class P2PNetwork {
       const call = this.peer.call(peerId, this.localStream);
       if (!call) return;
       this.voiceConnections.set(peerId, call);
-      call.on('stream', () => {});
-      call.on('close', () => this.voiceConnections.delete(peerId));
+      call.on('stream', (remoteStream) => {
+        const audio = new Audio();
+        audio.srcObject = remoteStream;
+        audio.play().catch(() => {});
+        this.voiceAudioElements.set(peerId, audio);
+      });
+      call.on('close', () => {
+        this.voiceConnections.delete(peerId);
+        const el = this.voiceAudioElements.get(peerId);
+        if (el) { el.pause(); el.srcObject = null; }
+        this.voiceAudioElements.delete(peerId);
+      });
       call.on('error', (err) => logger.error('[P2P Voice] Call error:', err));
     } catch (err) {
       logger.warn('[P2P Voice] Failed to call peer:', peerId, err);
