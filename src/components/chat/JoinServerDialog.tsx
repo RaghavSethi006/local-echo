@@ -28,8 +28,15 @@ export function JoinServerDialog({ open, onOpenChange }: JoinServerDialogProps) 
   const [activeTab, setActiveTab] = useState('paste');
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const scanningRef = useRef(false);
+  const rafRef = useRef<number | null>(null);
 
   const stopCamera = () => {
+    scanningRef.current = false;
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(t => t.stop());
       streamRef.current = null;
@@ -116,6 +123,7 @@ export function JoinServerDialog({ open, onOpenChange }: JoinServerDialogProps) 
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
       streamRef.current = stream;
       setScanning(true);
+      scanningRef.current = true;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.play();
@@ -127,10 +135,10 @@ export function JoinServerDialog({ open, onOpenChange }: JoinServerDialogProps) 
   };
 
   const scanFrame = () => {
-    if (!videoRef.current || !streamRef.current) return;
+    if (!scanningRef.current || !videoRef.current || !streamRef.current) return;
     const video = videoRef.current;
     if (video.readyState < video.HAVE_ENOUGH_DATA) {
-      requestAnimationFrame(scanFrame);
+      rafRef.current = requestAnimationFrame(scanFrame);
       return;
     }
     const canvas = document.createElement('canvas');
@@ -138,7 +146,7 @@ export function JoinServerDialog({ open, onOpenChange }: JoinServerDialogProps) 
     canvas.height = video.videoHeight;
     const ctx = canvas.getContext('2d');
     if (!ctx) {
-      requestAnimationFrame(scanFrame);
+      rafRef.current = requestAnimationFrame(scanFrame);
       return;
     }
     ctx.drawImage(video, 0, 0);
@@ -148,7 +156,7 @@ export function JoinServerDialog({ open, onOpenChange }: JoinServerDialogProps) 
       stopCamera();
       handleQrResult(result);
     } else {
-      requestAnimationFrame(scanFrame);
+      rafRef.current = requestAnimationFrame(scanFrame);
     }
   };
 

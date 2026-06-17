@@ -24,9 +24,14 @@ export function ScanQRDialog({ open, onOpenChange, onResult, title, description 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const scanningRef = useRef(false);
+  const rafRef = useRef<number | null>(null);
 
   const stopCamera = () => {
     scanningRef.current = false;
+    if (rafRef.current !== null) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
     if (streamRef.current) {
       streamRef.current.getTracks().forEach(t => t.stop());
       streamRef.current = null;
@@ -92,7 +97,7 @@ export function ScanQRDialog({ open, onOpenChange, onResult, title, description 
     if (!scanningRef.current || !videoRef.current || !streamRef.current) return;
     const video = videoRef.current;
     if (video.readyState < video.HAVE_ENOUGH_DATA) {
-      requestAnimationFrame(scanFrame);
+      rafRef.current = requestAnimationFrame(scanFrame);
       return;
     }
     const canvas = document.createElement('canvas');
@@ -100,7 +105,7 @@ export function ScanQRDialog({ open, onOpenChange, onResult, title, description 
     canvas.height = video.videoHeight;
     const ctx = canvas.getContext('2d');
     if (!ctx) {
-      requestAnimationFrame(scanFrame);
+      rafRef.current = requestAnimationFrame(scanFrame);
       return;
     }
     ctx.drawImage(video, 0, 0);
@@ -111,7 +116,7 @@ export function ScanQRDialog({ open, onOpenChange, onResult, title, description 
       onOpenChange(false);
       onResult(result);
     } else {
-      requestAnimationFrame(scanFrame);
+      rafRef.current = requestAnimationFrame(scanFrame);
     }
   };
 
