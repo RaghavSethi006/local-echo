@@ -61,6 +61,7 @@ export interface Server {
   config?: CommunityConfig;
   channels: Channel[];
   members: PeerId[];
+  memberRoles: Record<string, string[]>;
   hostId: string;
   createdAt: number;
   inviteCode?: string;

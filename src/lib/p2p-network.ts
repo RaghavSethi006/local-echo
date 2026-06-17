@@ -312,6 +312,7 @@ export class P2PNetwork {
       config: createDefaultCommunityConfig(createInput, this.localPeer.id),
       channels,
       members: [this.localPeer],
+      memberRoles: { [this.localPeer.id]: ['owner'] },
       hostId: this.localPeer.id,
       createdAt: Date.now(),
     };
@@ -559,6 +560,7 @@ export class P2PNetwork {
           name: invite.serverName,
           channels: [],
           members: [hostPeer, this.localPeer],
+          memberRoles: { [this.localPeer.id]: ['newcomer'], [hostPeer.id]: ['owner'] },
           hostId: invite.hostPeerId,
           createdAt: invite.timestamp,
         };
@@ -663,6 +665,10 @@ export class P2PNetwork {
         this.servers.forEach(server => {
           if (!server.members.find(m => m.id === peerInfo.id)) {
             server.members.push(peerInfo);
+            server.memberRoles = server.memberRoles || {};
+            if (!server.memberRoles[peerInfo.id]) {
+              server.memberRoles[peerInfo.id] = ['newcomer'];
+            }
           }
         });
 
@@ -1033,10 +1039,15 @@ export class P2PNetwork {
         existing.channels = server.channels;
         existing.hostId = server.hostId;
         existing.createdAt = server.createdAt;
+        existing.memberRoles = server.memberRoles;
         // Merge members
         server.members.forEach(m => {
           if (!existing.members.find(em => em.id === m.id)) {
             existing.members.push(m);
+            // Assign default 'newcomer' role for new members
+            if (!existing.memberRoles[m.id]) {
+              existing.memberRoles[m.id] = ['newcomer'];
+            }
           }
         });
         // Ensure we're in the list
@@ -1047,6 +1058,9 @@ export class P2PNetwork {
       } else {
         if (!server.members.find(m => m.id === this.localPeer.id)) {
           server.members.push(this.localPeer);
+        }
+        if (!server.memberRoles) {
+          server.memberRoles = {};
         }
         this.servers.set(server.id, server);
       }
@@ -1236,14 +1250,49 @@ export class P2PNetwork {
     return server.members.some(m => m.id === peerId);
   }
 
-  private hasPermission(serverId: string, peerId: string, permission: string): boolean {
+  private hasPermission(serverId: string, peerId: string, permission: string, channelId?: string): boolean {
     const server = this.servers.get(serverId);
     if (!server) return false;
-    // Host/creator has all permissions
     if (server.hostId === peerId) return true;
-    // TODO: check against CommunityRole permissions and PermissionOverwrites
-    // For now, allow all members basic permissions
-    return this.isServerMember(serverId, peerId);
+
+    const memberRoleIds = server.memberRoles?.[peerId];
+    if (!memberRoleIds || memberRoleIds.length === 0) return false;
+
+    // Collect all permissions from the peer's roles
+    const granted = new Set<string>();
+    server.config?.roles?.forEach(role => {
+      if (memberRoleIds.includes(role.id)) {
+        role.permissions.forEach(p => granted.add(p));
+      }
+    });
+
+    // Apply server-scoped overwrites
+    server.config?.permissionOverwrites?.forEach(ow => {
+      if (ow.scopeType !== 'server') return;
+      const matches = ow.targetType === 'role'
+        ? memberRoleIds.includes(ow.targetId)
+        : ow.targetId === peerId;
+      if (matches) {
+        ow.allow.forEach(p => granted.add(p));
+        ow.deny.forEach(p => granted.delete(p));
+      }
+    });
+
+    // Apply channel-scoped overwrites
+    if (channelId) {
+      server.config?.permissionOverwrites?.forEach(ow => {
+        if (ow.scopeType !== 'channel' || ow.scopeId !== channelId) return;
+        const matches = ow.targetType === 'role'
+          ? memberRoleIds.includes(ow.targetId)
+          : ow.targetId === peerId;
+        if (matches) {
+          ow.allow.forEach(p => granted.add(p));
+          ow.deny.forEach(p => granted.delete(p));
+        }
+      });
+    }
+
+    return granted.has(permission);
   }
 
   private async getOrDeriveSharedKey(remotePeerId: string, remotePublicKeyString: string): Promise<CryptoKey | null> {
