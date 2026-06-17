@@ -1,18 +1,43 @@
-import { useState, lazy, Suspense } from 'react';
+import { useState, lazy, Suspense, useCallback } from 'react';
 import { useP2P } from '@/contexts/P2PContext';
 import { cn } from '@/lib/utils';
-import { Plus, Hash, Settings, Wifi, WifiOff, MessageCircle } from 'lucide-react';
+import { Plus, Hash, Settings, Wifi, WifiOff, MessageCircle, ScanLine } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { toast } from 'sonner';
 
 const CreateServerDialog = lazy(() => import('./CreateServerDialog').then(m => ({ default: m.CreateServerDialog })));
 const JoinServerDialog = lazy(() => import('./JoinServerDialog').then(m => ({ default: m.JoinServerDialog })));
 const SettingsDialog = lazy(() => import('./SettingsDialog').then(m => ({ default: m.SettingsDialog })));
+const ScanQRDialog = lazy(() => import('./ScanQRDialog').then(m => ({ default: m.ScanQRDialog })));
 
 export function ServerSidebar() {
-  const { servers, currentServer, selectServer, connectionStatus, viewMode, setViewMode, dmConversations } = useP2P();
+  const { servers, currentServer, selectServer, connectionStatus, viewMode, setViewMode, dmConversations, joinServer, startDMByPeerId } = useP2P();
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [showJoinDialog, setShowJoinDialog] = useState(false);
   const [showSettingsDialog, setShowSettingsDialog] = useState(false);
+  const [showScanDialog, setShowScanDialog] = useState(false);
+
+  const handleScanResult = useCallback(async (result: string) => {
+    if (result.startsWith('local-echo-profile://')) {
+      const rest = result.slice('local-echo-profile://'.length);
+      const atIdx = rest.lastIndexOf('@');
+      if (atIdx >= 0) {
+        const peerId = rest.slice(0, atIdx);
+        const username = rest.slice(atIdx + 1);
+        if (peerId) {
+          await startDMByPeerId(peerId, username);
+          toast.success(`Started DM with ${username || peerId.slice(0, 8)}`);
+        }
+      }
+    } else {
+      try {
+        await joinServer(result);
+        toast.success('Joined server successfully!');
+      } catch {
+        toast.error('Failed to join server from QR code');
+      }
+    }
+  }, [joinServer, startDMByPeerId]);
 
   const getStatusColor = () => {
     switch (connectionStatus) {
@@ -147,6 +172,25 @@ export function ServerSidebar() {
         </TooltipContent>
       </Tooltip>
 
+      {/* Scan QR Button */}
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            onClick={() => setShowScanDialog(true)}
+            className={cn(
+              "w-12 h-12 rounded-2xl flex items-center justify-center",
+              "bg-secondary text-muted-foreground transition-all duration-200",
+              "hover:rounded-xl hover:bg-accent hover:text-accent-foreground"
+            )}
+          >
+            <ScanLine className="w-5 h-5" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side="right">
+          <p>Scan QR Code</p>
+        </TooltipContent>
+      </Tooltip>
+
       {/* Spacer */}
       <div className="flex-1" />
 
@@ -173,6 +217,7 @@ export function ServerSidebar() {
         <CreateServerDialog open={showCreateDialog} onOpenChange={setShowCreateDialog} />
         <JoinServerDialog open={showJoinDialog} onOpenChange={setShowJoinDialog} />
         <SettingsDialog open={showSettingsDialog} onOpenChange={setShowSettingsDialog} />
+        <ScanQRDialog open={showScanDialog} onOpenChange={setShowScanDialog} onResult={handleScanResult} />
       </Suspense>
     </aside>
   );

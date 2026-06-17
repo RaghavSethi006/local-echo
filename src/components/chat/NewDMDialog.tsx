@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, lazy, Suspense } from 'react';
 import { useP2P } from '@/contexts/P2PContext';
 import {
   Dialog,
@@ -10,9 +10,11 @@ import {
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { Search, MessageCircle, Users, KeyRound, Send } from 'lucide-react';
+import { Search, MessageCircle, Users, KeyRound, Send, ScanLine } from 'lucide-react';
 import { PeerId } from '@/types/p2p';
 import { toast } from 'sonner';
+
+const ScanQRDialog = lazy(() => import('./ScanQRDialog').then(m => ({ default: m.ScanQRDialog })));
 
 interface NewDMDialogProps {
   open: boolean;
@@ -25,6 +27,24 @@ export function NewDMDialog({ open, onOpenChange }: NewDMDialogProps) {
   const [peerIdInput, setPeerIdInput] = useState('');
   const [usernameInput, setUsernameInput] = useState('');
   const [mode, setMode] = useState<'list' | 'peerId'>('list');
+  const [scanOpen, setScanOpen] = useState(false);
+
+  const handleScanResult = async (result: string) => {
+    if (!result.startsWith('local-echo-profile://')) return;
+    const rest = result.slice('local-echo-profile://'.length);
+    const atIdx = rest.lastIndexOf('@');
+    if (atIdx < 0) return;
+    const peerId = rest.slice(0, atIdx);
+    const username = rest.slice(atIdx + 1);
+    if (!peerId) return;
+    try {
+      await startDMByPeerId(peerId, username);
+      toast.success(`Started DM with ${username || peerId.slice(0, 8)}`);
+      onOpenChange(false);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to start DM');
+    }
+  };
 
   const filteredPeers = availablePeersForDM.filter(peer =>
     peer.username.toLowerCase().includes(searchQuery.toLowerCase())
@@ -106,6 +126,15 @@ export function NewDMDialog({ open, onOpenChange }: NewDMDialogProps) {
             )}
           >
             <KeyRound className="w-3.5 h-3.5 inline mr-1" /> By Peer ID
+          </button>
+          <button
+            onClick={() => setScanOpen(true)}
+            className={cn(
+              'flex-1 px-3 py-1.5 text-xs font-medium rounded transition-colors',
+              'text-muted-foreground hover:text-foreground'
+            )}
+          >
+            <ScanLine className="w-3.5 h-3.5 inline mr-1" /> Scan QR
           </button>
         </div>
 
@@ -203,6 +232,10 @@ export function NewDMDialog({ open, onOpenChange }: NewDMDialogProps) {
         </div>
         </>
         )}
+
+        <Suspense fallback={null}>
+          <ScanQRDialog open={scanOpen} onOpenChange={setScanOpen} onResult={handleScanResult} title="Scan Profile QR" description="Scan a profile QR code to start a direct message." />
+        </Suspense>
 
         {/* Info */}
         <div className="p-3 rounded-lg bg-secondary/50 border border-border">

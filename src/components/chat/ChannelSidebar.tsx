@@ -1,23 +1,48 @@
-import { useState, lazy, Suspense } from 'react';
+import { useState, lazy, Suspense, useCallback } from 'react';
 import { useP2P } from '@/contexts/P2PContext';
 import { cn } from '@/lib/utils';
-import { Hash, Volume2, ChevronDown, Settings, UserPlus, Search } from 'lucide-react';
+import { Hash, Volume2, ChevronDown, Settings, UserPlus, Search, ScanLine } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { toast } from 'sonner';
 
 const ServerSettingsDialog = lazy(() => import('./ServerSettingsDialog').then(m => ({ default: m.ServerSettingsDialog })));
 const SearchDialog = lazy(() => import('./SearchDialog').then(m => ({ default: m.SearchDialog })));
 const InviteQRDialog = lazy(() => import('./InviteQRDialog').then(m => ({ default: m.InviteQRDialog })));
 const SettingsDialog = lazy(() => import('./SettingsDialog').then(m => ({ default: m.SettingsDialog })));
+const ScanQRDialog = lazy(() => import('./ScanQRDialog').then(m => ({ default: m.ScanQRDialog })));
 
 export function ChannelSidebar() {
-  const { currentServer, currentChannel, selectChannel, isCurrentServerHost, localPeer } = useP2P();
+  const { currentServer, currentChannel, selectChannel, isCurrentServerHost, localPeer, joinServer, startDMByPeerId } = useP2P();
   const [textChannelsOpen, setTextChannelsOpen] = useState(true);
   const [voiceChannelsOpen, setVoiceChannelsOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [scanOpen, setScanOpen] = useState(false);
+
+  const handleScanResult = useCallback(async (result: string) => {
+    if (result.startsWith('local-echo-profile://')) {
+      const rest = result.slice('local-echo-profile://'.length);
+      const atIdx = rest.lastIndexOf('@');
+      if (atIdx >= 0) {
+        const peerId = rest.slice(0, atIdx);
+        const username = rest.slice(atIdx + 1);
+        if (peerId) {
+          await startDMByPeerId(peerId, username);
+          toast.success(`Started DM with ${username || peerId.slice(0, 8)}`);
+        }
+      }
+    } else {
+      try {
+        await joinServer(result);
+        toast.success('Joined server successfully!');
+      } catch {
+        toast.error('Failed to join server from QR code');
+      }
+    }
+  }, [joinServer, startDMByPeerId]);
 
   if (!currentServer) {
     return (
@@ -157,6 +182,9 @@ export function ChannelSidebar() {
             {isCurrentServerHost ? 'Hosting' : 'Online'}
           </p>
         </div>
+        <button onClick={() => setScanOpen(true)} className="p-1 text-muted-foreground hover:text-foreground transition-colors" aria-label="Scan QR code">
+          <ScanLine className="w-4 h-4" />
+        </button>
         <button onClick={() => setProfileOpen(true)} className="p-1 text-muted-foreground hover:text-foreground transition-colors" aria-label="Profile settings">
           <Settings className="w-4 h-4" />
         </button>
@@ -167,6 +195,7 @@ export function ChannelSidebar() {
         <SearchDialog open={searchOpen} onOpenChange={setSearchOpen} />
         <InviteQRDialog open={inviteOpen} onOpenChange={setInviteOpen} />
         <SettingsDialog open={profileOpen} onOpenChange={setProfileOpen} />
+        <ScanQRDialog open={scanOpen} onOpenChange={setScanOpen} onResult={handleScanResult} />
       </Suspense>
     </aside>
   );
