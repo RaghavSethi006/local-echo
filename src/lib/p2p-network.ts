@@ -605,13 +605,6 @@ export class P2PNetwork {
             timestamp: Date.now(),
           });
 
-          // Initiate Yjs sync for each channel
-          server.channels.forEach(ch => {
-            const channelKey = this.yjs.channelKey(server.id, ch.id);
-            this.yjs.getOrCreateChannelDoc(server.id, ch.id);
-            this.yjs.sendSyncStep1(channelKey);
-          });
-
           this.emitEvent({ type: 'peer-joined', payload: hostPeer, timestamp: Date.now() });
           server.inviteCode = inviteCode;
           this.servers.set(server.id, server);
@@ -731,10 +724,12 @@ export class P2PNetwork {
   }
 
   private setupConnectionHandlers(conn: DataConnection, remotePeerId: string, isBulk: boolean = false): void {
+    const channelSuffix = isBulk ? ':bulk' : ':rt';
+
     conn.on('data', async (data: unknown) => {
       try {
         const raw = typeof data === 'string' ? data : JSON.stringify(data);
-        const assembled = this.receiveChunk(remotePeerId, raw);
+        const assembled = this.receiveChunk(remotePeerId + channelSuffix, raw);
         if (!assembled) return;
 
         if (!isBulk) {
@@ -750,7 +745,7 @@ export class P2PNetwork {
     });
 
     conn.on('close', () => {
-      this.chunkBuffers.delete(remotePeerId);
+      this.chunkBuffers.delete(remotePeerId + channelSuffix);
       if (isBulk) {
         logger.log('[P2P] Bulk connection closed:', remotePeerId);
         this.bulkConnections.delete(remotePeerId);
@@ -1081,6 +1076,17 @@ export class P2PNetwork {
 
     logger.log('[P2P] Synced with host');
     this.scheduleSave('servers');
+
+    // Initiate Yjs sync for each channel (channels are only available now
+    // after the sync-response merges them into the local server objects)
+    this.servers.forEach(server => {
+      server.channels.forEach(ch => {
+        const channelKey = this.yjs.channelKey(server.id, ch.id);
+        this.yjs.getOrCreateChannelDoc(server.id, ch.id);
+        this.yjs.sendSyncStep1(channelKey);
+      });
+    });
+
     this.emitEvent({ type: 'sync-response', payload: null, timestamp: Date.now() });
   }
 
@@ -1145,7 +1151,7 @@ export class P2PNetwork {
 
       this.broadcast({
         type: 'host-changed',
-        payload: this.localPeer,
+        payload: { newHostId: this.localPeer.id },
         timestamp: Date.now(),
       });
     } else {
@@ -1160,11 +1166,15 @@ export class P2PNetwork {
       }
     }
 
-    this.emitEvent({
-      type: 'host-changed',
-      payload: { newHostId },
-      timestamp: Date.now(),
-    });
+    // Only emit locally when the new host is remote (local state when
+    // self-electing is already updated above, and the broadcast covers peers)
+    if (newHostId !== this.localPeer.id) {
+      this.emitEvent({
+        type: 'host-changed',
+        payload: { newHostId },
+        timestamp: Date.now(),
+      });
+    }
   }
 
   private reconnectToHost(newHostId: string): void {
