@@ -101,7 +101,7 @@ describe('messages', () => {
   it('should load recent messages', async () => {
     const messages = Array.from({ length: 10 }, (_, i) => ({
       id: `msg-${i}`, serverId: 's1', channelId: 'c1',
-      author: { id: 'u1', username: 'U' }, content: `Msg ${i}`, seq: i as const, timestamp: i * 1000,
+      author: { id: 'u1', username: 'U' }, content: `Msg ${i}`, seq: i, timestamp: i * 1000,
     }));
     await Storage.saveMessages(messages);
     const recent = await Storage.loadRecentMessages('s1', 'c1', 3);

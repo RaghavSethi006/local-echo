@@ -256,6 +256,21 @@ This design represents the optimal balance for a browser-based cloudless chat:
 - [ ] End-to-end encrypted voice channels
 - [ ] File sharing through data channels
 
+## 🚀 Getting Started
+
+```bash
+npm install
+cp .env.example .env   # optional: configure VITE_ICE_SERVERS or custom PeerJS signaling
+npm run dev            # starts Vite on http://localhost:3000
+```
+
+### Verification Scripts
+
+- `npm run typecheck` — TypeScript project check (`tsc -b --noEmit`)
+- `npm run lint` — ESLint checks
+- `npm test` — Vitest unit and component tests
+- `npm run build` — Production bundle build
+
 ## 📝 License
 
 MIT — Use freely, contribute openly.

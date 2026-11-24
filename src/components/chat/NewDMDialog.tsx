@@ -8,9 +8,11 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { getAvatarColor } from '@/lib/avatar-color';
+import { parseProfileQR } from '@/lib/qr';
 import { Search, MessageCircle, Users, KeyRound, Send, ScanLine } from 'lucide-react';
 import { PeerId } from '@/types/p2p';
 import { toast } from 'sonner';
@@ -31,16 +33,14 @@ export function NewDMDialog({ open, onOpenChange }: NewDMDialogProps) {
   const [scanOpen, setScanOpen] = useState(false);
 
   const handleScanResult = async (result: string) => {
-    if (!result.startsWith('local-echo-profile://')) return;
-    const rest = result.slice('local-echo-profile://'.length);
-    const atIdx = rest.lastIndexOf('@');
-    if (atIdx < 0) return;
-    const peerId = rest.slice(0, atIdx);
-    const username = rest.slice(atIdx + 1);
-    if (!peerId) return;
+    const profile = parseProfileQR(result);
+    if (!profile) {
+      toast.error('QR code is not a valid OffGrid profile link');
+      return;
+    }
     try {
-      await startDMByPeerId(peerId, username);
-      toast.success(`Started DM with ${username || peerId.slice(0, 8)}`);
+      await startDMByPeerId(profile.peerId, profile.username);
+      toast.success(`Started DM with ${profile.username || profile.peerId.slice(0, 8)}`);
       onOpenChange(false);
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Failed to start DM');
@@ -90,8 +90,11 @@ export function NewDMDialog({ open, onOpenChange }: NewDMDialogProps) {
         </DialogHeader>
 
         {/* Tabs */}
-        <div className="flex gap-1 p-1 bg-secondary/50 rounded-md">
+        <div className="flex gap-1 p-1 bg-secondary/50 rounded-md" role="tablist">
           <button
+            type="button"
+            role="tab"
+            aria-selected={mode === 'list'}
             onClick={() => setMode('list')}
             className={cn(
               'flex-1 px-3 py-1.5 text-xs font-medium rounded transition-colors',
@@ -103,6 +106,9 @@ export function NewDMDialog({ open, onOpenChange }: NewDMDialogProps) {
             <Users className="w-3.5 h-3.5 inline mr-1" /> Known peers
           </button>
           <button
+            type="button"
+            role="tab"
+            aria-selected={mode === 'peerId'}
             onClick={() => setMode('peerId')}
             className={cn(
               'flex-1 px-3 py-1.5 text-xs font-medium rounded transition-colors',
@@ -114,6 +120,7 @@ export function NewDMDialog({ open, onOpenChange }: NewDMDialogProps) {
             <KeyRound className="w-3.5 h-3.5 inline mr-1" /> By Peer ID
           </button>
           <button
+            type="button"
             onClick={() => setScanOpen(true)}
             className={cn(
               'flex-1 px-3 py-1.5 text-xs font-medium rounded transition-colors',
@@ -127,8 +134,9 @@ export function NewDMDialog({ open, onOpenChange }: NewDMDialogProps) {
         {mode === 'peerId' ? (
           <div className="space-y-3">
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-foreground">Peer ID</label>
+              <Label htmlFor="dm-peer-id" className="text-xs font-medium">Peer ID</Label>
               <Input
+                id="dm-peer-id"
                 value={peerIdInput}
                 onChange={(e) => setPeerIdInput(e.target.value)}
                 placeholder="Paste peer ID..."
@@ -137,15 +145,16 @@ export function NewDMDialog({ open, onOpenChange }: NewDMDialogProps) {
               />
             </div>
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-foreground">Display name (optional)</label>
+              <Label htmlFor="dm-peer-username" className="text-xs font-medium">Display name (optional)</Label>
               <Input
+                id="dm-peer-username"
                 value={usernameInput}
                 onChange={(e) => setUsernameInput(e.target.value)}
                 placeholder="What to call them"
                 onKeyDown={(e) => e.key === 'Enter' && handleStartByPeerId()}
               />
             </div>
-            <Button onClick={handleStartByPeerId} className="w-full">
+            <Button type="button" onClick={handleStartByPeerId} className="w-full">
               <Send className="w-4 h-4 mr-2" /> Start Conversation
             </Button>
             <p className="text-xs text-muted-foreground">
@@ -153,70 +162,72 @@ export function NewDMDialog({ open, onOpenChange }: NewDMDialogProps) {
             </p>
           </div>
         ) : (
-        <>
-        {/* Search */}
-        <div className="relative">
-          <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Search by username..."
-            className="pl-9"
-          />
-        </div>
-
-        {/* Peers List */}
-        <div className="max-h-64 overflow-y-auto space-y-1">
-          {filteredPeers.length === 0 ? (
-            <div className="py-8 text-center">
-              <Users className="w-10 h-10 mx-auto mb-3 text-muted-foreground/50" />
-              <p className="text-sm text-muted-foreground">
-                {searchQuery ? 'No peers found' : 'No peers available'}
-              </p>
-              <p className="text-xs text-muted-foreground/70 mt-1">
-                Join a server to discover peers, or switch to "By Peer ID"
-              </p>
+          <>
+            {/* Search */}
+            <div className="relative">
+              <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search by username..."
+                aria-label="Search known peers"
+                className="pl-9"
+              />
             </div>
-          ) : (
-            filteredPeers.map((peer) => (
-              <button
-                key={peer.id}
-                onClick={() => handleSelectPeer(peer)}
-                className={cn(
-                  "w-full flex items-center gap-3 px-3 py-2 rounded-md",
-                  "transition-colors text-left",
-                  "hover:bg-channel-hover"
-                )}
-              >
-                {/* Avatar */}
-                <div className="relative flex-shrink-0">
-                  <div className={cn(
-                    "w-10 h-10 rounded-full flex items-center justify-center",
-                    "text-sm font-semibold text-white",
-                    getAvatarColor(peer.username)
-                  )}>
-                    {peer.username.charAt(0).toUpperCase()}
-                  </div>
-                  <div className={cn(
-                    "absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-popover",
-                    isOnline(peer.id) ? "bg-status-online" : "bg-status-offline"
-                  )} />
-                </div>
 
-                {/* Info */}
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-foreground truncate">
-                    {peer.username}
+            {/* Peers List */}
+            <div className="max-h-64 overflow-y-auto space-y-1">
+              {filteredPeers.length === 0 ? (
+                <div className="py-8 text-center">
+                  <Users className="w-10 h-10 mx-auto mb-3 text-muted-foreground/50" />
+                  <p className="text-sm text-muted-foreground">
+                    {searchQuery ? 'No peers found' : 'No peers available'}
                   </p>
-                  <p className="text-xs text-muted-foreground">
-                    {isOnline(peer.id) ? 'Online' : 'Offline'}
+                  <p className="text-xs text-muted-foreground/70 mt-1">
+                    Join a server to discover peers, or switch to "By Peer ID"
                   </p>
                 </div>
-              </button>
-            ))
-          )}
-        </div>
-        </>
+              ) : (
+                filteredPeers.map((peer) => (
+                  <button
+                    key={peer.id}
+                    type="button"
+                    onClick={() => handleSelectPeer(peer)}
+                    className={cn(
+                      'w-full flex items-center gap-3 px-3 py-2 rounded-md',
+                      'transition-colors text-left',
+                      'hover:bg-channel-hover'
+                    )}
+                  >
+                    {/* Avatar */}
+                    <div className="relative flex-shrink-0">
+                      <div className={cn(
+                        'w-10 h-10 rounded-full flex items-center justify-center',
+                        'text-sm font-semibold text-white',
+                        getAvatarColor(peer.username)
+                      )}>
+                        {peer.username.charAt(0).toUpperCase()}
+                      </div>
+                      <div className={cn(
+                        'absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 border-popover',
+                        isOnline(peer.id) ? 'bg-status-online' : 'bg-status-offline'
+                      )} />
+                    </div>
+
+                    {/* Info */}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-foreground truncate">
+                        {peer.username}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {isOnline(peer.id) ? 'Online' : 'Offline'}
+                      </p>
+                    </div>
+                  </button>
+                ))
+              )}
+            </div>
+          </>
         )}
 
         <Suspense fallback={null}>
@@ -226,7 +237,7 @@ export function NewDMDialog({ open, onOpenChange }: NewDMDialogProps) {
         {/* Info */}
         <div className="p-3 rounded-lg bg-secondary/50 border border-border">
           <p className="text-xs text-muted-foreground">
-            <strong className="text-foreground">Direct & Private</strong> — 
+            <strong className="text-foreground">Direct & Private</strong> —
             Messages are sent directly peer-to-peer when possible, with end-to-end encryption.
             The server host cannot read your DMs.
           </p>

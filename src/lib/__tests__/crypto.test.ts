@@ -2,6 +2,10 @@ import { describe, it, expect } from 'vitest';
 import {
   generateKeyPair,
   generateSigningKeyPair,
+  exportKeyPairJwk,
+  importKeyPairJwk,
+  exportSigningKeyPairJwk,
+  importSigningKeyPairJwk,
   importPublicKey,
   deriveSharedKey,
   encrypt,
@@ -22,6 +26,21 @@ describe('generateKeyPair', () => {
     expect(typeof keyPair.publicKeyString).toBe('string');
     expect(keyPair.publicKeyString.length).toBeGreaterThan(0);
   });
+
+  it('should export and re-import ECDH keypair via JWK', async () => {
+    const original = await generateKeyPair();
+    const jwk = await exportKeyPairJwk(original);
+    const restored = await importKeyPairJwk(jwk.publicKeyJwk, jwk.privateKeyJwk, jwk.publicKeyString);
+    expect(restored.publicKeyString).toBe(original.publicKeyString);
+
+    const peer = await generateKeyPair();
+    const peerPub = await importPublicKey(peer.publicKeyString);
+    const keyOriginal = await deriveSharedKey(original.privateKey, peerPub);
+    const keyRestored = await deriveSharedKey(restored.privateKey, peerPub);
+
+    const encrypted = await encrypt('jwk-persistence-check', keyOriginal);
+    expect(await decrypt(encrypted, keyRestored)).toBe('jwk-persistence-check');
+  });
 });
 
 describe('generateSigningKeyPair', () => {
@@ -31,6 +50,16 @@ describe('generateSigningKeyPair', () => {
     expect(signingPair.verifyKeyString).toBeDefined();
     expect(typeof signingPair.verifyKeyString).toBe('string');
     expect(signingPair.verifyKeyString.length).toBeGreaterThan(0);
+  });
+
+  it('should export and re-import ECDSA signing keypair via JWK', async () => {
+    const original = await generateSigningKeyPair();
+    const jwk = await exportSigningKeyPairJwk(original);
+    const restored = await importSigningKeyPairJwk(jwk.verifyKeyJwk, jwk.signingKeyJwk, jwk.verifyKeyString);
+    expect(restored.verifyKeyString).toBe(original.verifyKeyString);
+
+    const sig = await signData('persisted-invite', restored.signingKey);
+    expect(await verifySignature('persisted-invite', sig, original.verifyKeyString)).toBe(true);
   });
 });
 
@@ -50,6 +79,18 @@ describe('encrypt/decrypt round trip', () => {
     const bobSharedKey = await deriveSharedKey(bob.privateKey, alicePub);
     const decrypted = await decrypt(encrypted, bobSharedKey);
     expect(decrypted).toBe(plaintext);
+  });
+
+  it('should encrypt and decrypt large (>100KB) payloads without call-stack overflow', async () => {
+    const alice = await generateKeyPair();
+    const bob = await generateKeyPair();
+    const bobPub = await importPublicKey(bob.publicKeyString);
+    const sharedKey = await deriveSharedKey(alice.privateKey, bobPub);
+
+    const largeText = 'OffGrid-Payload-'.repeat(8192);
+    const encrypted = await encrypt(largeText, sharedKey);
+    const decrypted = await decrypt(encrypted, sharedKey);
+    expect(decrypted).toBe(largeText);
   });
 
   it('should produce different ciphertexts for same plaintext', async () => {

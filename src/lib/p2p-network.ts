@@ -2,19 +2,37 @@
 // PeerJS handles signaling automatically via its open-source signaling server.
 // All actual data flows peer-to-peer through WebRTC DataChannels.
 
-import Peer, { DataConnection } from 'peerjs';
+import Peer, { DataConnection, MediaConnection } from 'peerjs';
 import { 
   PeerId, 
   Message, 
   Server, 
-
   P2PEvent, 
   ConnectionStatus,
   DirectMessage,
   DMConversation,
   ChannelOp,
 } from '@/types/p2p';
-import { generateId, generateKeyPair, generateSigningKeyPair, deriveSharedKey, encrypt, decrypt, importPublicKey, signData, verifySignature, KeyPair, generateStorageKey, exportStorageKey, importStorageKey } from './crypto';
+import {
+  generateId,
+  generateKeyPair,
+  generateSigningKeyPair,
+  deriveSharedKey,
+  encrypt,
+  decrypt,
+  importPublicKey,
+  signData,
+  verifySignature,
+  KeyPair,
+  SigningKeyPair,
+  exportKeyPairJwk,
+  importKeyPairJwk,
+  exportSigningKeyPairJwk,
+  importSigningKeyPairJwk,
+  generateStorageKey,
+  exportStorageKey,
+  importStorageKey,
+} from './crypto';
 import * as Storage from './storage';
 import { createDefaultCommunityConfig } from '@/lib/templates';
 import { getTemplateChannels } from '@/types/community';
@@ -25,7 +43,22 @@ import type { YjsSyncMessage } from './yjs-manager';
 
 type EventCallback = (event: P2PEvent) => void;
 type ServerUpdatePatch = { name?: string; icon?: string; channelOps?: ChannelOp[]; configPatch?: CommunityConfigPatch };
+type WireServerPatch = Partial<Server> & { _channelOps?: ChannelOp[]; _configPatch?: CommunityConfigPatch };
 type CoreServer = Omit<Server, 'config'>;
+
+interface InvitePayload {
+  serverId: string;
+  serverName: string;
+  hostPeerId: string;
+  hostUsername?: string;
+  hostVerifyKey?: string;
+  timestamp: number;
+}
+
+interface SignedInviteEnvelope {
+  payload?: InvitePayload;
+  signature?: string;
+}
 
 interface SyncRequestPayload {
   peerInfo?: PeerId;
@@ -95,7 +128,7 @@ export async function compressInvite(json: string): Promise<string> {
   const inputBytes = encoder.encode(json);
   const cs = new CompressionStream('gzip');
   const writer = cs.writable.getWriter();
-  await writer.write(inputBytes);
+  await writer.write(inputBytes as BufferSource);
   await writer.close();
   const reader = cs.readable.getReader();
   const chunks: Uint8Array[] = [];
@@ -118,7 +151,7 @@ export async function decompressInvite(base64: string): Promise<string> {
   const compressed = base64ToUint8Array(base64);
   const ds = new DecompressionStream('gzip');
   const writer = ds.writable.getWriter();
-  await writer.write(compressed);
+  await writer.write(compressed as BufferSource);
   await writer.close();
   const reader = ds.readable.getReader();
   const chunks: Uint8Array[] = [];
@@ -137,10 +170,21 @@ export async function decompressInvite(base64: string): Promise<string> {
   return new TextDecoder().decode(result);
 }
 
+function isValidInvitePayload(candidate: unknown): candidate is InvitePayload {
+  if (!candidate || typeof candidate !== 'object') return false;
+  const inv = candidate as Partial<InvitePayload>;
+  return (
+    typeof inv.serverId === 'string' && inv.serverId.length > 0 && inv.serverId.length <= 128 &&
+    typeof inv.serverName === 'string' && inv.serverName.length > 0 && inv.serverName.length <= 128 &&
+    typeof inv.hostPeerId === 'string' && inv.hostPeerId.length > 0 && inv.hostPeerId.length <= 128 &&
+    typeof inv.timestamp === 'number' && Number.isFinite(inv.timestamp)
+  );
+}
+
 export class P2PNetwork {
   private localPeer: PeerId;
   private keyPair: KeyPair | null = null;
-  private signingKeyPair: { signingKey: CryptoKey; verifyKey: CryptoKey; verifyKeyString: string } | null = null;
+  private signingKeyPair: SigningKeyPair | null = null;
   private storageKey: CryptoKey | null = null;
   private sharedKeys: Map<string, CryptoKey> = new Map();
   private peer: Peer | null = null;
@@ -160,6 +204,8 @@ export class P2PNetwork {
   private heartbeatInterval: ReturnType<typeof setInterval> | null = null;
   private migrationInProgress = false;
   private migrationTimeout: ReturnType<typeof setTimeout> | null = null;
+  private reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+  private destroyed = false;
 
   // DM state
   private dmConversations: Map<string, DMConversation> = new Map();
@@ -187,13 +233,47 @@ export class P2PNetwork {
   }
 
   async initialize(): Promise<void> {
-    this.keyPair = await generateKeyPair();
+    this.destroyed = false;
+
+    // Restore existing cryptographic identity if available for this peerId
+    try {
+      const stored = await Storage.loadIdentity();
+      if (stored && stored.peerId === this.localPeer.id) {
+        if (stored.publicKeyJwk && stored.privateKeyJwk) {
+          this.keyPair = await importKeyPairJwk(
+            stored.publicKeyJwk,
+            stored.privateKeyJwk,
+            stored.publicKey
+          );
+        }
+        if (stored.verifyKeyJwk && stored.signingKeyJwk) {
+          this.signingKeyPair = await importSigningKeyPairJwk(
+            stored.verifyKeyJwk,
+            stored.signingKeyJwk,
+            stored.verifyKey
+          );
+        }
+        if (stored.storageKeyJwk) {
+          this.storageKey = await importStorageKey(stored.storageKeyJwk);
+        }
+      }
+    } catch {
+      logger.warn('[P2P] Could not restore stored cryptographic keys; generating new keys');
+    }
+
+    if (!this.keyPair) {
+      this.keyPair = await generateKeyPair();
+    }
     this.localPeer.publicKey = this.keyPair.publicKeyString;
-    this.signingKeyPair = await generateSigningKeyPair();
+
+    if (!this.signingKeyPair) {
+      this.signingKeyPair = await generateSigningKeyPair();
+    }
     this.localPeer.verifyKey = this.signingKeyPair.verifyKeyString;
 
-    // Generate an AES-GCM storage key for at-rest DM encryption
-    this.storageKey = await generateStorageKey();
+    if (!this.storageKey) {
+      this.storageKey = await generateStorageKey();
+    }
     Storage.setStorageKey(this.storageKey);
 
     return new Promise((resolve, reject) => {
@@ -235,6 +315,11 @@ export class P2PNetwork {
         if (this.localStream) {
           call.answer(this.localStream);
           this.voiceConnections.set(call.peer, call);
+          this.emitEvent({
+            type: 'voice-state-changed',
+            payload: { joined: true, peerId: call.peer },
+            timestamp: Date.now(),
+          });
           call.on('stream', (remoteStream) => {
             const audio = new Audio();
             audio.srcObject = remoteStream;
@@ -246,6 +331,11 @@ export class P2PNetwork {
             const el = this.voiceAudioElements.get(call.peer);
             if (el) { el.pause(); el.srcObject = null; }
             this.voiceAudioElements.delete(call.peer);
+            this.emitEvent({
+              type: 'voice-state-changed',
+              payload: { peerLeft: call.peer },
+              timestamp: Date.now(),
+            });
           });
           call.on('error', (err) => logger.error('[P2P Voice] Incoming call error:', err));
         } else {
@@ -263,10 +353,12 @@ export class P2PNetwork {
       });
 
       this.peer.on('disconnected', () => {
+        if (this.destroyed) return;
         const delay = Math.min(1000 * 2 ** this.reconnectAttempts, 30000);
         if (this.reconnectAttempts < this.MAX_RECONNECT_ATTEMPTS) {
           logger.log(`[P2P] Disconnected, reconnecting in ${delay}ms (attempt ${this.reconnectAttempts + 1}/${this.MAX_RECONNECT_ATTEMPTS})...`);
-          setTimeout(() => {
+          this.reconnectTimeout = setTimeout(() => {
+            if (this.destroyed) return;
             this.reconnectAttempts++;
             this.peer?.reconnect();
           }, delay);
@@ -283,7 +375,7 @@ export class P2PNetwork {
       this.heartbeatInterval = setInterval(() => this.sendHeartbeats(), 15_000);
 
       // Wire Yjs sync to network layer
-      this.yjs.setSyncOutgoingHandler((msg) => this.handleYjsSyncOutgoing(msg));
+      this.yjs.setSyncOutgoingHandler((msg, targetPeerId) => this.handleYjsSyncOutgoing(msg, targetPeerId));
       this.yjs.onChange((channelKey) => {
         if (channelKey.startsWith('channel:')) this.syncCacheFromYjs(channelKey);
         if (channelKey.startsWith('dm:')) this.syncCacheFromYjsDM(channelKey);
@@ -323,11 +415,13 @@ export class P2PNetwork {
     this.isHost = true;
     this.hostId = this.localPeer.id;
 
-    server.channels.forEach(ch => {
-      const key = `${server.id}:${ch.id}`;
-      this.messages.set(key, []);
-      this.yjs.getOrCreateChannelDoc(server.id, ch.id);
-    });
+    await Promise.all(
+      server.channels.map(ch => {
+        const key = `${server.id}:${ch.id}`;
+        this.messages.set(key, []);
+        return this.yjs.getOrCreateChannelDoc(server.id, ch.id);
+      })
+    );
 
     logger.log('[P2P] Created server:', server.name, '| Host peer ID:', this.localPeer.id);
     this.scheduleSave('servers');
@@ -500,21 +594,39 @@ export class P2PNetwork {
 
   // Join server by connecting to the host's PeerJS ID
   async joinServer(inviteCode: string): Promise<Server> {
-    let parsedInvite: Record<string, unknown>;
+    let parsedInvite: SignedInviteEnvelope & Partial<InvitePayload>;
     try {
       const decompressed = await withTimeout(decompressInvite(inviteCode), 3000, 'decompressInvite');
-      parsedInvite = JSON.parse(decompressed);
-    } catch (err) {
-      console.error('[P2P] decompressInvite failed, falling back to atob:', err);
-      parsedInvite = JSON.parse(atob(inviteCode));
+      parsedInvite = JSON.parse(decompressed) as SignedInviteEnvelope & Partial<InvitePayload>;
+    } catch {
+      try {
+        parsedInvite = JSON.parse(atob(inviteCode)) as SignedInviteEnvelope & Partial<InvitePayload>;
+      } catch {
+        throw new Error('Invalid invite code format.');
+      }
     }
-    const invite = parsedInvite.payload ?? parsedInvite;
-    const signature = parsedInvite.signature;
+
+    const rawInvite = parsedInvite.payload ?? parsedInvite;
+    if (!isValidInvitePayload(rawInvite)) {
+      throw new Error('Invite code is missing required server details.');
+    }
+    const invite: InvitePayload = rawInvite;
+    const signature = typeof parsedInvite.signature === 'string' ? parsedInvite.signature : undefined;
+
+    if (invite.hostVerifyKey && !signature) {
+      throw new Error('Invite code is missing a signature.');
+    }
+    if (signature && !invite.hostVerifyKey) {
+      throw new Error('Invite code signature cannot be verified without host key.');
+    }
     if (invite.hostVerifyKey && signature) {
       const valid = await verifySignature(JSON.stringify(invite), signature, invite.hostVerifyKey);
       if (!valid) {
         throw new Error('Invite code has an invalid signature — it may have been tampered with.');
       }
+    }
+    if (invite.hostPeerId === this.localPeer.id) {
+      throw new Error('You cannot join your own peer ID as a remote server.');
     }
     logger.log('[P2P] Joining server:', invite.serverName, 'via host:', invite.hostPeerId);
 
@@ -523,6 +635,7 @@ export class P2PNetwork {
     const hostPeer: PeerId = {
       id: invite.hostPeerId,
       username: invite.hostUsername || 'Host',
+      verifyKey: invite.hostVerifyKey,
     };
 
     // Connect to host
@@ -697,21 +810,15 @@ export class P2PNetwork {
 
       // Initiate Yjs sync for each shared channel
       if (this.isHost) {
-        this.servers.forEach(server => {
-          if (!server.members.find(m => m.id === peerInfo.id)) return;
-          server.channels.forEach(ch => {
+        for (const server of this.servers.values()) {
+          if (!server.members.find(m => m.id === peerInfo.id)) continue;
+          for (const ch of server.channels) {
             const channelKey = this.yjs.channelKey(server.id, ch.id);
-            this.yjs.getOrCreateChannelDoc(server.id, ch.id);
-            const target = this.bulkConnections.get(conn.peer)?.open
-              ? this.bulkConnections.get(conn.peer)!
-              : conn;
-            this.sendToConnection(target, {
-              type: 'yjs-sync',
-              payload: { channelKey, step: 1, data: '' },
-              timestamp: Date.now(),
+            void this.yjs.getOrCreateChannelDoc(server.id, ch.id).then(() => {
+              this.yjs.sendSyncStep1(channelKey, conn.peer);
             });
-          });
-        });
+          }
+        }
       }
     });
   }
@@ -805,35 +912,47 @@ export class P2PNetwork {
       case 'dm-message':
         await this.handleDMMessage(event.payload as DirectMessage, fromPeerId);
         break;
-      case 'dm-typing':
-        this.handleDMTyping(event.payload.peerId || fromPeerId, event.payload.isTyping);
+      case 'dm-typing': {
+        const p = (event.payload ?? {}) as { peerId?: string; isTyping?: boolean };
+        const senderId = p.peerId === fromPeerId ? fromPeerId : fromPeerId;
+        this.handleDMTyping(senderId, Boolean(p.isTyping));
         break;
+      }
       case 'dm-read':
         this.emitEvent(event);
         break;
       case 'server-updated': {
-        const { serverId, patch } = event.payload || {};
+        const { serverId, patch } = (event.payload ?? {}) as { serverId?: string; patch?: WireServerPatch };
+        if (!serverId || !patch) break;
         const server = this.servers.get(serverId);
-        if (server && patch) {
+        // Only the authoritative host of that server may push server updates
+        if (server && fromPeerId === server.hostId) {
           this.applyServerPatch(server, patch);
           this.servers.set(serverId, server);
           this.scheduleSave('servers');
           this.emitEvent({ type: 'server-updated', payload: { serverId }, timestamp: Date.now() });
+        } else if (server) {
+          logger.warn('[P2P] Ignored unauthorized server-updated from', fromPeerId);
         }
         break;
       }
       case 'server-deleted': {
-        const { serverId } = event.payload || {};
-        if (serverId) {
-          // Fire and forget — local cleanup
-          this.removeServerLocal(serverId);
+        const { serverId } = (event.payload ?? {}) as { serverId?: string };
+        if (!serverId) break;
+        const server = this.servers.get(serverId);
+        // Only the authoritative host may delete the server
+        if (server && fromPeerId === server.hostId) {
+          void this.removeServerLocal(serverId);
+        } else if (server) {
+          logger.warn('[P2P] Ignored unauthorized server-deleted from', fromPeerId);
         }
         break;
       }
       case 'config-sync': {
-        const { serverId, config } = event.payload as { serverId: string; config: CommunityConfig };
+        const { serverId, config } = (event.payload ?? {}) as { serverId?: string; config?: CommunityConfig };
+        if (!serverId || !config) break;
         const server = this.servers.get(serverId);
-        if (server && config) {
+        if (server && fromPeerId === server.hostId) {
           const incomingVersion = config.version ?? 0;
           const existingVersion = server.config?.version ?? 0;
           if (incomingVersion >= existingVersion) {
@@ -846,6 +965,8 @@ export class P2PNetwork {
               timestamp: Date.now(),
             });
           }
+        } else if (server) {
+          logger.warn('[P2P] Ignored unauthorized config-sync from', fromPeerId);
         }
         break;
       }
@@ -961,29 +1082,69 @@ export class P2PNetwork {
     const parts = channelKey.split(':');
     if (parts.length < 3) return;
     const remoteId = parts[1] === this.localPeer.id ? parts[2] : parts[1];
-    this.yjs.getOrCreateDMDoc(remoteId).then(doc => {
+    this.yjs.getOrCreateDMDoc(remoteId).then(async doc => {
       if (!doc) return;
       const msgs = this.yjs.getDMMessages(doc);
-      const conv = this.getOrCreateDMConversation({
-        id: remoteId,
-        username: this.dmConversations.get(remoteId)?.peerId.username || `peer-${remoteId.slice(0, 6)}`,
-      });
+      const knownPeer = this.findPeerById(remoteId);
+      const conv = this.getOrCreateDMConversation(
+        knownPeer || {
+          id: remoteId,
+          username: this.dmConversations.get(remoteId)?.peerId.username || `peer-${remoteId.slice(0, 6)}`,
+        }
+      );
       // Merge without duplicates
       const existingIds = new Set(conv.messages.map(m => m.id));
+      let lastAdded: DirectMessage | null = null;
+      const sharedKey =
+        conv.peerId.publicKey && this.keyPair
+          ? await this.getOrDeriveSharedKey(remoteId, conv.peerId.publicKey)
+          : null;
+
       for (const dm of msgs) {
         if (!existingIds.has(dm.id)) {
+          if (dm.encrypted && sharedKey) {
+            try {
+              dm.content = await decrypt(dm.content, sharedKey);
+              dm.encrypted = false;
+            } catch {
+              // Keep existing content if decryption fails
+            }
+          }
           conv.messages.push(dm);
           conv.lastMessage = dm;
+          if (dm.from.id !== this.localPeer.id) {
+            conv.unreadCount++;
+          }
           existingIds.add(dm.id);
+          lastAdded = dm;
         }
       }
       this.dmConversations.set(remoteId, conv);
       this.scheduleSave('dms');
-      this.emitEvent({ type: 'dm-message', payload: { dm: msgs[msgs.length - 1], incoming: true }, timestamp: Date.now() });
+      if (lastAdded) {
+        this.emitEvent({
+          type: 'dm-message',
+          payload: { dm: lastAdded, incoming: lastAdded.from.id !== this.localPeer.id },
+          timestamp: Date.now(),
+        });
+      }
     });
   }
 
-  private handleChatMessage(message: Message, _fromPeerId: string): void {
+  private handleChatMessage(message: Message, fromPeerId: string): void {
+    if (!message || typeof message.content !== 'string' || !message.serverId || !message.channelId || !message.author?.id) {
+      return;
+    }
+    const server = this.servers.get(message.serverId);
+    if (!server) return;
+    // Reject spoofed local messages or messages from non-members
+    if (message.author.id === this.localPeer.id) return;
+    if (!this.isServerMember(message.serverId, fromPeerId)) return;
+    if (message.author.id !== fromPeerId && fromPeerId !== server.hostId) {
+      logger.warn('[P2P] Rejected spoofed channel message author', message.author.id, 'from', fromPeerId);
+      return;
+    }
+
     const key = `${message.serverId}:${message.channelId}`;
     const channelMessages = this.messages.get(key) || [];
 
@@ -1089,13 +1250,13 @@ export class P2PNetwork {
 
     // Initiate Yjs sync for each channel (channels are only available now
     // after the sync-response merges them into the local server objects)
-    this.servers.forEach(server => {
-      server.channels.forEach(ch => {
+    for (const server of this.servers.values()) {
+      for (const ch of server.channels) {
         const channelKey = this.yjs.channelKey(server.id, ch.id);
-        this.yjs.getOrCreateChannelDoc(server.id, ch.id);
-        this.yjs.sendSyncStep1(channelKey);
-      });
-    });
+        await this.yjs.getOrCreateChannelDoc(server.id, ch.id);
+        this.yjs.sendSyncStep1(channelKey, server.hostId);
+      }
+    }
 
     this.emitEvent({ type: 'sync-response', payload: null, timestamp: Date.now() });
   }
@@ -1106,7 +1267,7 @@ export class P2PNetwork {
     if (!this.isServerMember(serverId, this.localPeer.id)) {
       throw new Error('You are not a member of this server.');
     }
-    if (!this.hasPermission(serverId, this.localPeer.id, 'send_messages')) {
+    if (!this.hasPermission(serverId, this.localPeer.id, 'send_messages', channelId)) {
       throw new Error('You do not have permission to send messages in this server.');
     }
     const MAX_MESSAGE_BYTES = 8192;
@@ -1125,7 +1286,7 @@ export class P2PNetwork {
     };
 
     // Add to Yjs doc (triggers Yjs update broadcast to peers)
-    const doc = this.yjs.getOrCreateChannelDoc(serverId, channelId);
+    const doc = await this.yjs.getOrCreateChannelDoc(serverId, channelId);
     this.yjs.addChannelMessage(doc, message);
 
     // Update local cache and emit for UI
@@ -1338,13 +1499,15 @@ export class P2PNetwork {
         });
 
         // Initiate Yjs sync for all channel docs
-        this.servers.forEach(server => {
-          server.channels.forEach(ch => {
-            const channelKey = this.yjs.channelKey(server.id, ch.id);
-            this.yjs.getOrCreateChannelDoc(server.id, ch.id);
-            this.yjs.sendSyncStep1(channelKey);
-          });
-        });
+        void Promise.all(
+          Array.from(this.servers.values()).flatMap(server =>
+            server.channels.map(async ch => {
+              const channelKey = this.yjs.channelKey(server.id, ch.id);
+              await this.yjs.getOrCreateChannelDoc(server.id, ch.id);
+              this.yjs.sendSyncStep1(channelKey, newHostId);
+            })
+          )
+        );
       });
     });
 
@@ -1587,9 +1750,17 @@ export class P2PNetwork {
     return count;
   }
 
-  private async handleDMMessage(dm: DirectMessage, _fromPeerId: string): Promise<void> {
-    // Host relay logic - forward without inspecting content
+  private async handleDMMessage(dm: DirectMessage, fromPeerId: string): Promise<void> {
+    if (!dm || !dm.id || !dm.from?.id || typeof dm.content !== 'string') {
+      return;
+    }
+
+    // Host relay logic - verify sender matches connection peerId before forwarding
     if (this.isHost && dm._relayTo && dm._relayTo !== this.localPeer.id) {
+      if (dm.from.id !== fromPeerId) {
+        logger.warn('[P2P DM] Rejected spoofed relay from', fromPeerId, 'claiming', dm.from.id);
+        return;
+      }
       const target = this.connections.get(dm._relayTo);
       if (target?.conn?.open) {
         const { _relayTo, ...cleanDm } = dm;
@@ -1598,8 +1769,18 @@ export class P2PNetwork {
       return;
     }
 
-    if (dm.encrypted && dm.from.publicKey && this.keyPair) {
-      const sharedKey = await this.getOrDeriveSharedKey(dm.from.id, dm.from.publicKey);
+    // Reject spoofed messages not originating from the direct peer or trusted server host relay
+    if (dm.from.id === this.localPeer.id) return;
+    if (dm.from.id !== fromPeerId && fromPeerId !== this.hostId) {
+      logger.warn('[P2P DM] Rejected spoofed DM from', fromPeerId, 'claiming', dm.from.id);
+      return;
+    }
+
+    // Pin known peer public key so an attacker cannot silently swap keys mid-conversation
+    const knownPeer = this.findPeerById(dm.from.id);
+    const senderPublicKey = knownPeer?.publicKey || dm.from.publicKey;
+    if (dm.encrypted && senderPublicKey && this.keyPair) {
+      const sharedKey = await this.getOrDeriveSharedKey(dm.from.id, senderPublicKey);
       if (sharedKey) {
         try {
           dm.content = await decrypt(dm.content, sharedKey);
@@ -1610,7 +1791,7 @@ export class P2PNetwork {
     }
 
     // Store the message
-    const conv = this.getOrCreateDMConversation(dm.from);
+    const conv = this.getOrCreateDMConversation(knownPeer || dm.from);
     if (!conv.messages.find(m => m.id === dm.id)) {
       conv.messages.push(dm);
       conv.lastMessage = dm;
@@ -1738,6 +1919,11 @@ export class P2PNetwork {
         const el = this.voiceAudioElements.get(peerId);
         if (el) { el.pause(); el.srcObject = null; }
         this.voiceAudioElements.delete(peerId);
+        this.emitEvent({
+          type: 'voice-state-changed',
+          payload: { peerId, closed: true },
+          timestamp: Date.now(),
+        });
       });
       call.on('error', (err) => logger.error('[P2P Voice] Call error:', err));
     } catch (err) {
@@ -1763,6 +1949,14 @@ export class P2PNetwork {
   isMuted(): boolean { return this.muted; }
   isInVoiceChannel(): boolean { return this.activeVoiceChannel !== null; }
   getActiveVoiceChannel(): { serverId: string; channelId: string } | null { return this.activeVoiceChannel; }
+  getActiveVoicePeers(): PeerId[] {
+    if (!this.activeVoiceChannel) return [];
+    const peers: PeerId[] = [this.localPeer];
+    for (const peerId of this.voiceConnections.keys()) {
+      peers.push(this.findPeerById(peerId) || { id: peerId, username: `peer-${peerId.slice(0, 6)}` });
+    }
+    return peers;
+  }
 
   // ==================== UTILITIES ====================
 
@@ -1824,15 +2018,42 @@ export class P2PNetwork {
 
     if (!this.isChunkFrame(parsed)) return raw;
 
+    const MAX_CHUNKS_TOTAL = 1024;
+    const MAX_CHUNK_DATA_CHARS = 65_536;
+    const MAX_CONCURRENT_MESSAGES_PER_PEER = 32;
+
+    if (
+      !Number.isInteger(parsed._total) ||
+      parsed._total < 1 ||
+      parsed._total > MAX_CHUNKS_TOTAL ||
+      !Number.isInteger(parsed._index) ||
+      parsed._index < 0 ||
+      parsed._index >= parsed._total ||
+      parsed._chunkId.length === 0 ||
+      parsed._chunkId.length > 128 ||
+      parsed._data.length > MAX_CHUNK_DATA_CHARS
+    ) {
+      logger.warn('[P2P] Dropped malformed chunk frame from', peerId);
+      return null;
+    }
+
     if (!this.chunkBuffers.has(peerId)) {
       this.chunkBuffers.set(peerId, new Map());
     }
     const peerMap = this.chunkBuffers.get(peerId)!;
 
     if (!peerMap.has(parsed._chunkId)) {
+      if (peerMap.size >= MAX_CONCURRENT_MESSAGES_PER_PEER) {
+        const oldestKey = peerMap.keys().next().value;
+        if (oldestKey !== undefined) peerMap.delete(oldestKey);
+      }
       peerMap.set(parsed._chunkId, new Array(parsed._total).fill(null));
     }
     const chunks = peerMap.get(parsed._chunkId)!;
+    if (chunks.length !== parsed._total) {
+      peerMap.delete(parsed._chunkId);
+      return null;
+    }
     chunks[parsed._index] = parsed._data;
 
     if (chunks.every(chunk => chunk !== null)) {
@@ -1975,10 +2196,24 @@ export class P2PNetwork {
   }
 
   async disconnect(): Promise<void> {
+    this.destroyed = true;
+    await this.leaveVoiceChannel();
     await this.flushSaves();
     if (this.heartbeatInterval) {
       clearInterval(this.heartbeatInterval);
       this.heartbeatInterval = null;
+    }
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
+    if (this.migrationTimeout) {
+      clearTimeout(this.migrationTimeout);
+      this.migrationTimeout = null;
+    }
+    if (this.saveDebounceTimer) {
+      clearTimeout(this.saveDebounceTimer);
+      this.saveDebounceTimer = null;
     }
     this.connections.forEach(entry => {
       entry.conn?.close();
@@ -2021,7 +2256,18 @@ export class P2PNetwork {
           peerId: this.localPeer.id,
           username: this.localPeer.username,
           publicKey: this.localPeer.publicKey,
+          verifyKey: this.localPeer.verifyKey,
         };
+        if (this.keyPair) {
+          const exported = await exportKeyPairJwk(this.keyPair);
+          identity.publicKeyJwk = exported.publicKeyJwk;
+          identity.privateKeyJwk = exported.privateKeyJwk;
+        }
+        if (this.signingKeyPair) {
+          const exportedSigning = await exportSigningKeyPairJwk(this.signingKeyPair);
+          identity.verifyKeyJwk = exportedSigning.verifyKeyJwk;
+          identity.signingKeyJwk = exportedSigning.signingKeyJwk;
+        }
         if (this.storageKey) {
           identity.storageKeyJwk = await exportStorageKey(this.storageKey);
         }
@@ -2036,6 +2282,7 @@ export class P2PNetwork {
             icon: server.icon,
             config: server.config,
             channels: server.channels,
+            memberRoles: server.memberRoles,
             hostId: server.hostId,
             createdAt: server.createdAt,
             inviteCode: server.inviteCode,
@@ -2075,11 +2322,19 @@ export class P2PNetwork {
       const storedServers = await Storage.loadServers();
       for (const s of storedServers) {
         if (!this.servers.has(s.id)) {
+          const isLocalHost = s.hostId === this.localPeer.id;
+          if (isLocalHost) {
+            this.isHost = true;
+            this.hostId = this.localPeer.id;
+          }
           const restoredServer: Server = {
             id: s.id,
             name: s.name,
             channels: s.channels,
             members: [this.localPeer],
+            memberRoles: s.memberRoles || {
+              [this.localPeer.id]: [isLocalHost ? 'owner' : 'newcomer'],
+            },
             hostId: s.hostId,
             createdAt: s.createdAt,
             inviteCode: s.inviteCode,
@@ -2129,6 +2384,21 @@ export class P2PNetwork {
         try {
           const dmDoc = await this.yjs.getOrCreateDMDoc(c.peerId);
           dmMsgs = this.yjs.getDMMessages(dmDoc);
+          if (c.peerPublicKey && this.keyPair) {
+            const sharedKey = await this.getOrDeriveSharedKey(c.peerId, c.peerPublicKey);
+            if (sharedKey) {
+              for (const dm of dmMsgs) {
+                if (dm.encrypted) {
+                  try {
+                    dm.content = await decrypt(dm.content, sharedKey);
+                    dm.encrypted = false;
+                  } catch {
+                    dm.content = '[Failed to decrypt message]';
+                  }
+                }
+              }
+            }
+          }
         } catch {
           dmMsgs = [];
         }

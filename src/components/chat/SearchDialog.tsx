@@ -9,6 +9,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
+import { formatSearchDate } from '@/lib/date';
 import { Hash, MessageCircle, Search } from 'lucide-react';
 import type { Message, DirectMessage } from '@/types/p2p';
 
@@ -32,12 +33,16 @@ type SearchHit = {
 };
 
 export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
-  const { servers, dmConversations, localPeer, selectServer, selectChannel, openDM, getAllMessages } = useP2P();
+  const { servers, dmConversations, localPeer, selectServer, openDM, getAllMessages } = useP2P();
   const [query, setQuery] = useState('');
 
-  // Channel messages come from P2PNetwork's Yjs-managed cache; DM messages still via P2PEvent
-  const allChannelMsgs: Message[] = useMemo(() => getAllMessages(), [getAllMessages, open]);
+  const allChannelMsgs: Message[] = useMemo(
+    () => (open ? getAllMessages() : []),
+    [getAllMessages, open]
+  );
+
   const allDMMsgs: DirectMessage[] = useMemo(() => {
+    if (!open) return [];
     const all: DirectMessage[] = [];
     for (const conv of dmConversations) {
       all.push(...conv.messages);
@@ -45,22 +50,14 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
     return all;
   }, [dmConversations, open]);
 
-  const serverById = useMemo(() => {
-    const m = new Map(servers.map(s => [s.id, s]));
-    return m;
-  }, [servers]);
-
-  const dmByPeer = useMemo(() => {
-    const m = new Map(dmConversations.map(c => [c.peerId.id, c]));
-    return m;
-  }, [dmConversations]);
+  const serverById = useMemo(() => new Map(servers.map(s => [s.id, s])), [servers]);
+  const dmByPeer = useMemo(() => new Map(dmConversations.map(c => [c.peerId.id, c])), [dmConversations]);
 
   const hits = useMemo<SearchHit[]>(() => {
     const q = query.trim().toLowerCase();
     if (!q) return [];
     const results: SearchHit[] = [];
 
-    // Channel messages
     for (const m of allChannelMsgs) {
       if (typeof m.content !== 'string') continue;
       if (!m.content.toLowerCase().includes(q)) continue;
@@ -79,7 +76,6 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
       });
     }
 
-    // DM messages
     for (const m of allDMMsgs) {
       if (typeof m.content !== 'string') continue;
       if (!m.content.toLowerCase().includes(q)) continue;
@@ -102,11 +98,12 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
   }, [query, allChannelMsgs, allDMMsgs, serverById, dmByPeer, localPeer]);
 
   const highlight = (text: string, q: string) => {
-    if (!q) return text;
-    const idx = text.toLowerCase().indexOf(q.toLowerCase());
+    const trimmed = q.trim();
+    if (!trimmed) return text;
+    const idx = text.toLowerCase().indexOf(trimmed.toLowerCase());
     if (idx < 0) return text;
     const start = Math.max(0, idx - 30);
-    const end = Math.min(text.length, idx + q.length + 60);
+    const end = Math.min(text.length, idx + trimmed.length + 60);
     const prefix = start > 0 ? '…' : '';
     const suffix = end < text.length ? '…' : '';
     const slice = text.slice(start, end);
@@ -116,9 +113,9 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
         {prefix}
         {slice.slice(0, matchStart)}
         <mark className="bg-primary/30 text-foreground rounded px-0.5">
-          {slice.slice(matchStart, matchStart + q.length)}
+          {slice.slice(matchStart, matchStart + trimmed.length)}
         </mark>
-        {slice.slice(matchStart + q.length)}
+        {slice.slice(matchStart + trimmed.length)}
         {suffix}
       </>
     );
@@ -126,9 +123,7 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
 
   const handleHit = (hit: SearchHit) => {
     if (hit.kind === 'channel' && hit.serverId && hit.channelId) {
-      selectServer(hit.serverId);
-      // selectServer auto-picks first channel; explicitly select the one we want
-      setTimeout(() => selectChannel(hit.channelId!), 0);
+      selectServer(hit.serverId, hit.channelId);
     } else if (hit.kind === 'dm' && hit.peerId) {
       const conv = dmByPeer.get(hit.peerId);
       const peer = conv?.peerId || { id: hit.peerId, username: hit.peerName || 'peer' };
@@ -136,15 +131,6 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
     }
     onOpenChange(false);
     setQuery('');
-  };
-
-  const formatDate = (ts: number) => {
-    const d = new Date(ts);
-    const today = new Date();
-    const isToday = d.toDateString() === today.toDateString();
-    return isToday
-      ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      : d.toLocaleDateString([], { month: 'short', day: 'numeric' });
   };
 
   return (
@@ -166,6 +152,7 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search messages..."
+            aria-label="Search messages"
             className="pl-9"
             autoFocus
           />
@@ -183,7 +170,7 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
               <p className="text-sm text-muted-foreground">
                 Start typing to search.
               </p>
-              <p className="text-xs text-muted-foreground/70 mt-1">
+              <p className="text-xs text-muted-foreground/70 mt-1 tabular-nums">
                 {allChannelMsgs.length + allDMMsgs.length} messages indexed locally.
               </p>
             </div>
@@ -193,6 +180,7 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
             {hits.map((hit) => (
               <li key={hit.id}>
                 <button
+                  type="button"
                   onClick={() => handleHit(hit)}
                   className={cn(
                     'w-full text-left px-3 py-2 rounded-md',
@@ -213,7 +201,7 @@ export function SearchDialog({ open, onOpenChange }: SearchDialogProps) {
                         <span className="truncate">@{hit.peerName}</span>
                       </>
                     )}
-                    <span className="ml-auto whitespace-nowrap">{formatDate(hit.timestamp)}</span>
+                    <span className="ml-auto whitespace-nowrap tabular-nums">{formatSearchDate(hit.timestamp)}</span>
                   </div>
                   <p className="text-sm text-foreground line-clamp-2">
                     <span className="text-muted-foreground mr-1">{hit.authorName}:</span>

@@ -21,14 +21,15 @@ import {
   Check,
   Hash,
   Loader2,
+  LogOut,
   Pencil,
   Plus,
   ShieldAlert,
   SlidersHorizontal,
   Trash2,
   UserCog,
+  Volume2,
   X,
-  LogOut,
 } from 'lucide-react';
 import { ChannelOp, Channel } from '@/types/p2p';
 import { createDefaultCommunityConfig } from '@/lib/templates';
@@ -76,13 +77,8 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     return createDefaultCommunityConfig({
       name: currentServer.name,
       icon: currentServer.icon,
-      tags: [],
       visibility: 'private',
       template: 'custom',
-      region: 'auto',
-      language: 'en',
-      onboardingTemplate: 'none',
-      aiSetupEnabled: false,
     }, localPeer.id);
   }, [currentServer, localPeer]);
 
@@ -92,25 +88,32 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
   const [pendingOps, setPendingOps] = useState<ChannelOp[]>([]);
   const [editing, setEditing] = useState<Record<string, { name: string; description: string }>>({});
   const [newChannel, setNewChannel] = useState('');
+  const [newChannelType, setNewChannelType] = useState<'text' | 'voice'>('text');
   const [newRoleName, setNewRoleName] = useState('');
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [confirmingDestructive, setConfirmingDestructive] = useState(false);
 
+  const serverId = currentServer?.id;
+  const serverName = currentServer?.name ?? '';
+  const serverIcon = currentServer?.icon ?? '';
+  const serverConfig = currentServer?.config;
+
   useEffect(() => {
-    if (open && currentServer && fallbackConfig) {
-      const nextConfig = cloneConfig(currentServer.config || fallbackConfig);
-      setName(currentServer.name);
-      setIcon(currentServer.icon || nextConfig.branding.icon || '');
+    if (open && serverId && fallbackConfig) {
+      const nextConfig = cloneConfig(serverConfig || fallbackConfig);
+      setName(serverName);
+      setIcon(serverIcon || nextConfig.branding.icon || '');
       setConfig(nextConfig);
       setPendingOps([]);
       setEditing({});
       setNewChannel('');
+      setNewChannelType('text');
       setNewRoleName('');
       setDirty(false);
       setConfirmingDestructive(false);
     }
-  }, [open, currentServer?.id, fallbackConfig]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [open, serverId, serverName, serverIcon, serverConfig, fallbackConfig]);
 
   const displayedChannels = useMemo<Channel[]>(() => {
     if (!currentServer) return [];
@@ -151,16 +154,19 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
       .slice(0, 32) || `channel-${Math.random().toString(36).slice(2, 6)}`;
 
   const addChannel = () => {
+    if (!newChannel.trim()) {
+      toast.error('Enter a channel name');
+      return;
+    }
     const cleanName = slugify(newChannel);
-    if (!cleanName) return;
-    if (displayedChannels.some(c => c.name === cleanName)) {
+    if (displayedChannels.some(c => c.name === cleanName && c.type === newChannelType)) {
       toast.error('A channel with that name already exists');
       return;
     }
     const channel: Channel = {
       id: `ch-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
       name: cleanName,
-      type: 'text',
+      type: newChannelType,
     };
     setPendingOps(ops => [...ops, { kind: 'add', channel }]);
     setNewChannel('');
@@ -169,11 +175,11 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
   const commitEdit = (channelId: string) => {
     const draft = editing[channelId];
     if (!draft) return;
-    const cleanName = slugify(draft.name);
-    if (!cleanName) {
+    if (!draft.name.trim()) {
       toast.error('Channel name cannot be empty');
       return;
     }
+    const cleanName = slugify(draft.name);
     setPendingOps(ops => [
       ...ops,
       { kind: 'rename', channelId, name: cleanName, description: draft.description.trim() || undefined },
@@ -242,6 +248,10 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
 
   const handleSave = async () => {
     if (!hasChanges) return;
+    if (!name.trim()) {
+      toast.error('Server name cannot be empty');
+      return;
+    }
     setSaving(true);
     try {
       await updateCurrentServer({
@@ -286,7 +296,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
 
   return (
     <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) setConfirmingDestructive(false); }}>
-      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-6xl">
+      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-5xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <SlidersHorizontal className="h-5 w-5" />
@@ -315,7 +325,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                     <CardDescription>Identity and description.</CardDescription>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <div className="grid gap-3 sm:grid-cols-[100px_1fr]">
+                    <div className="grid gap-3 sm:grid-cols-[120px_1fr]">
                       <div className="space-y-2">
                         <Label>Icon</Label>
                         <div className="grid grid-cols-3 gap-1">
@@ -323,8 +333,10 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                             <button
                               key={emoji}
                               type="button"
+                              aria-label={`Select icon ${emoji}`}
+                              aria-pressed={icon === emoji}
                               onClick={() => { setIcon(emoji); markConfig(d => { d.branding.icon = emoji; }); }}
-                              className={cn('h-9 rounded-lg border text-lg', icon === emoji ? 'border-primary bg-primary/10' : 'border-border bg-secondary')}
+                              className={cn('h-9 rounded-lg border text-lg transition-colors', icon === emoji ? 'border-primary bg-primary/10' : 'border-border bg-secondary hover:border-muted-foreground/40')}
                             >
                               {emoji}
                             </button>
@@ -333,12 +345,13 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                       </div>
                       <div className="space-y-3">
                         <div className="space-y-2">
-                          <Label>Server name</Label>
-                          <Input value={name} onChange={e => setName(e.target.value)} maxLength={48} />
+                          <Label htmlFor="server-settings-name">Server name</Label>
+                          <Input id="server-settings-name" value={name} onChange={e => setName(e.target.value)} maxLength={48} />
                         </div>
                         <div className="space-y-2">
-                          <Label>Description</Label>
+                          <Label htmlFor="server-settings-description">Description</Label>
                           <Textarea
+                            id="server-settings-description"
                             value={config.branding.description}
                             onChange={e => markConfig(d => { d.branding.description = e.target.value; })}
                             rows={3}
@@ -356,6 +369,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                   <CardContent className="space-y-3 text-sm">
                     <Metric label="Roles" value={config.roles.length} />
                     <Metric label="Channels" value={displayedChannels.length} />
+                    <Metric label="Members" value={currentServer.members.length} />
                   </CardContent>
                 </Card>
               </div>
@@ -365,25 +379,32 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2"><UserCog className="h-5 w-5" /> Role Hierarchy</CardTitle>
-                  <CardDescription>Unlimited roles, hierarchy, colors, mentionability, and core permissions.</CardDescription>
+                  <CardDescription>Custom roles, hierarchy, colors, and permissions.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div className="flex gap-2">
-                    <Input value={newRoleName} onChange={e => setNewRoleName(e.target.value)} placeholder="New role name" />
+                    <Input
+                      value={newRoleName}
+                      onChange={e => setNewRoleName(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addRole(); } }}
+                      placeholder="New role name"
+                      aria-label="New role name"
+                    />
                     <Button type="button" onClick={addRole}><Plus className="mr-2 h-4 w-4" /> Add role</Button>
                   </div>
                   {config.roles.slice().sort((a, b) => b.position - a.position).map(role => (
                     <div key={role.id} className="rounded-lg border border-border p-3">
                       <div className="flex items-start gap-3">
-                        <div className="mt-1 h-4 w-4 rounded-full" style={{ backgroundColor: role.color }} />
+                        <div className="mt-1 h-4 w-4 rounded-full flex-shrink-0" style={{ backgroundColor: role.color }} />
                         <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
                             <Input
                               value={role.name}
                               onChange={e => markConfig(d => { const r = d.roles.find(item => item.id === role.id); if (r) r.name = e.target.value; })}
                               className="h-8 max-w-64"
+                              aria-label={`Role name for ${role.name}`}
                             />
-                            <Badge variant="secondary">position {role.position}</Badge>
+                            <Badge variant="secondary" className="tabular-nums">position {role.position}</Badge>
                             {role.temporary && <Badge variant="outline">temporary</Badge>}
                             {role.hoisted && <Badge variant="outline">visible</Badge>}
                           </div>
@@ -391,18 +412,20 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                             value={role.description}
                             onChange={e => markConfig(d => { const r = d.roles.find(item => item.id === role.id); if (r) r.description = e.target.value; })}
                             className="mt-2 h-8"
+                            aria-label={`Role description for ${role.name}`}
                           />
                           <div className="mt-3 flex flex-wrap gap-1.5">
                             {primaryPermissions.map(permission => (
                               <button
                                 key={permission}
                                 type="button"
+                                aria-pressed={role.permissions.includes(permission)}
                                 onClick={() => toggleRolePermission(role.id, permission)}
                                 className={cn(
-                                  'rounded-full border px-2 py-1 text-xs',
+                                  'rounded-full border px-2 py-1 text-xs transition-colors',
                                   role.permissions.includes(permission)
                                     ? 'border-primary bg-primary/10 text-primary'
-                                    : 'border-border text-muted-foreground'
+                                    : 'border-border text-muted-foreground hover:text-foreground'
                                 )}
                               >
                                 {permission.replace(/_/g, ' ')}
@@ -410,7 +433,13 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                             ))}
                           </div>
                         </div>
-                        <Button type="button" variant="ghost" size="sm" onClick={() => removeRole(role.id)}>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => removeRole(role.id)}
+                          aria-label={`Delete role ${role.name}`}
+                        >
                           <Trash2 className="h-4 w-4" />
                         </Button>
                       </div>
@@ -424,7 +453,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
               <Card>
                 <CardHeader>
                   <CardTitle>Channel Management</CardTitle>
-                  <CardDescription>Text and voice spaces with editable descriptions. Voice channels are still marked coming soon in chat.</CardDescription>
+                  <CardDescription>Create, rename, or remove text and voice channels for your community.</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-2">
                   {displayedChannels.map(ch => {
@@ -432,59 +461,115 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                     if (draft) {
                       return (
                         <div key={ch.id} className="rounded-md border border-border bg-background p-2">
-                          <Input value={draft.name} onChange={e => setEditing({ ...editing, [ch.id]: { ...draft, name: e.target.value } })} />
-                          <Textarea className="mt-2" value={draft.description} onChange={e => setEditing({ ...editing, [ch.id]: { ...draft, description: e.target.value } })} rows={2} />
+                          <Input
+                            value={draft.name}
+                            onChange={e => setEditing({ ...editing, [ch.id]: { ...draft, name: e.target.value } })}
+                            aria-label="Channel name"
+                          />
+                          <Textarea
+                            className="mt-2"
+                            value={draft.description}
+                            onChange={e => setEditing({ ...editing, [ch.id]: { ...draft, description: e.target.value } })}
+                            rows={2}
+                            placeholder="Channel description"
+                            aria-label="Channel description"
+                          />
                           <div className="mt-2 flex justify-end gap-1">
-                            <Button size="sm" variant="ghost" onClick={() => { const next = { ...editing }; delete next[ch.id]; setEditing(next); }}><X className="h-4 w-4" /></Button>
-                            <Button size="sm" onClick={() => commitEdit(ch.id)}><Check className="h-4 w-4" /></Button>
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="ghost"
+                              aria-label="Cancel channel edit"
+                              onClick={() => { const next = { ...editing }; delete next[ch.id]; setEditing(next); }}
+                            >
+                              <X className="h-4 w-4" />
+                            </Button>
+                            <Button type="button" size="sm" aria-label="Save channel edit" onClick={() => commitEdit(ch.id)}>
+                              <Check className="h-4 w-4" />
+                            </Button>
                           </div>
                         </div>
                       );
                     }
                     return (
                       <div key={ch.id} className="group flex items-center gap-2 rounded-md border border-border p-2">
-                        <Hash className="h-4 w-4 text-muted-foreground" />
+                        {ch.type === 'voice' ? (
+                          <Volume2 className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                        ) : (
+                          <Hash className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                        )}
                         <div className="min-w-0 flex-1">
                           <p className="truncate text-sm font-medium">{ch.name}</p>
                           {ch.description && <p className="truncate text-xs text-muted-foreground">{ch.description}</p>}
                         </div>
                         <Badge variant="outline">{ch.type}</Badge>
-                        <Button size="sm" variant="ghost" onClick={() => setEditing({ ...editing, [ch.id]: { name: ch.name, description: ch.description || '' } })}><Pencil className="h-4 w-4" /></Button>
-                        <Button size="sm" variant="ghost" onClick={() => removeChannel(ch.id)}><Trash2 className="h-4 w-4 text-destructive" /></Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          aria-label={`Edit ${ch.name}`}
+                          onClick={() => setEditing({ ...editing, [ch.id]: { name: ch.name, description: ch.description || '' } })}
+                        >
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          aria-label={`Delete ${ch.name}`}
+                          onClick={() => removeChannel(ch.id)}
+                        >
+                          <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
                       </div>
                     );
                   })}
-                  <div className="flex gap-2 pt-2">
-                    <Input value={newChannel} onChange={e => setNewChannel(e.target.value)} onKeyDown={e => e.key === 'Enter' && addChannel()} placeholder="new-channel" />
+                  <div className="flex flex-wrap gap-2 pt-2">
+                    <select
+                      value={newChannelType}
+                      onChange={e => setNewChannelType(e.target.value as 'text' | 'voice')}
+                      aria-label="New channel type"
+                      className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+                    >
+                      <option value="text">Text</option>
+                      <option value="voice">Voice</option>
+                    </select>
+                    <Input
+                      className="flex-1 min-w-[160px]"
+                      value={newChannel}
+                      onChange={e => setNewChannel(e.target.value)}
+                      onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addChannel(); } }}
+                      placeholder={newChannelType === 'voice' ? 'voice-lounge' : 'new-channel'}
+                      aria-label="New channel name"
+                    />
                     <Button type="button" onClick={addChannel}><Plus className="mr-2 h-4 w-4" /> Add</Button>
                   </div>
                 </CardContent>
               </Card>
             </TabsContent>
-
-
           </Tabs>
         </fieldset>
 
         <div className="flex flex-col gap-2 border-t border-border pt-3">
           {isCurrentServerHost && (
             <div className="flex justify-end gap-2">
-              <Button variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
-              <Button onClick={handleSave} disabled={!hasChanges || saving}>
+              <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
+              <Button type="button" onClick={handleSave} disabled={!hasChanges || saving}>
                 {saving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
-                Save server systems
+                Save changes
               </Button>
             </div>
           )}
 
           <Button
+            type="button"
             variant={confirmingDestructive ? 'destructive' : 'outline'}
             onClick={handleDestructive}
             className="w-full"
           >
             {isCurrentServerHost ? <ShieldAlert className="mr-2 h-4 w-4" /> : <LogOut className="mr-2 h-4 w-4" />}
             {confirmingDestructive
-              ? 'Tap again to confirm'
+              ? 'Click again to confirm'
               : isCurrentServerHost
                 ? 'Delete server (broadcasts to all peers)'
                 : 'Leave server'}
@@ -494,5 +579,3 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     </Dialog>
   );
 }
-
-

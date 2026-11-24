@@ -1,12 +1,22 @@
-import { useEffect } from 'react';
+export function getNotificationPermission(): NotificationPermission | 'unsupported' {
+  if (typeof window === 'undefined' || !('Notification' in window)) {
+    return 'unsupported';
+  }
+  return Notification.permission;
+}
+
+export async function requestNotificationPermission(): Promise<NotificationPermission | 'unsupported'> {
+  if (typeof window === 'undefined' || !('Notification' in window)) {
+    return 'unsupported';
+  }
+  if (Notification.permission === 'default') {
+    return Notification.requestPermission();
+  }
+  return Notification.permission;
+}
 
 export function useNotificationPermission() {
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    if ('Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission();
-    }
-  }, []);
+  // Intentionally passive: permission should be requested on explicit user gesture (e.g., Settings)
 }
 
 export function sendBrowserNotification(title: string, body: string, icon?: string) {
@@ -14,5 +24,5 @@ export function sendBrowserNotification(title: string, body: string, icon?: stri
   if (!('Notification' in window)) return;
   if (Notification.permission !== 'granted') return;
   if (document.visibilityState === 'visible') return;
-  new Notification(title, { body, icon: icon || '/favicon.ico' });
+  new Notification(title, { body, icon: icon || '/offgrid-icon.svg' });
 }

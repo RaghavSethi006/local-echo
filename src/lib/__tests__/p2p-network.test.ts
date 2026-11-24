@@ -20,12 +20,12 @@ vi.mock('peerjs', () => {
   return { default: vi.fn(() => mockPeer) };
 });
 
-vi.mock('@/lib/storage', () => ({
+const mockStorage = vi.hoisted(() => ({
   setStorageKey: vi.fn(),
   saveIdentity: vi.fn(),
   loadIdentity: vi.fn(() => Promise.resolve(null)),
   saveServer: vi.fn(),
-  loadServers: vi.fn(() => Promise.resolve([])),
+  loadServers: vi.fn(() => Promise.resolve([] as Array<Record<string, unknown>>)),
   deleteServer: vi.fn(),
   saveMessages: vi.fn(),
   loadMessages: vi.fn(() => Promise.resolve([])),
@@ -41,18 +41,23 @@ vi.mock('@/lib/storage', () => ({
   deleteChannelMessages: vi.fn(),
 }));
 
+vi.mock('@/lib/storage', () => mockStorage);
+
+const mockDoc = {
+  getText: vi.fn(() => ({ insert: vi.fn(), toJSON: vi.fn(() => '[]') })),
+  on: vi.fn(),
+};
+const mockAddChannelMessage = vi.fn();
+const mockGetOrCreateChannelDoc = vi.fn(() => Promise.resolve(mockDoc));
+
 vi.mock('@/lib/yjs-manager', () => {
-  const mockDoc = {
-    getText: vi.fn(() => ({ insert: vi.fn(), toJSON: vi.fn(() => '[]') })),
-    on: vi.fn(),
-  };
   const MockYjsManager = vi.fn(function () {
     return {
-      getOrCreateChannelDoc: vi.fn(() => Promise.resolve(mockDoc)),
+      getOrCreateChannelDoc: mockGetOrCreateChannelDoc,
       getOrCreateDMDoc: vi.fn(() => Promise.resolve(mockDoc)),
       getChannelMessages: vi.fn(() => []),
       getDMMessages: vi.fn(() => []),
-      addChannelMessage: vi.fn(),
+      addChannelMessage: mockAddChannelMessage,
       addDMMessage: vi.fn(),
       setSyncOutgoingHandler: vi.fn(),
       onChange: vi.fn(),
@@ -65,14 +70,22 @@ vi.mock('@/lib/yjs-manager', () => {
   return { YjsManager: MockYjsManager as unknown };
 });
 
-import { P2PNetwork } from '../p2p-network';
+import { P2PNetwork, compressInvite } from '../p2p-network';
+import { generateSigningKeyPair, signData } from '../crypto';
+import type { Server } from '@/types/p2p';
+
+interface P2PNetworkInternals {
+  servers: Map<string, Server>;
+  handleEvent: (event: unknown, fromPeerId: string) => void;
+  receiveChunk: (fromPeerId: string, raw: string) => string | null;
+}
 
 describe('P2PNetwork', () => {
   let network: P2PNetwork;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    network = new P2PNetwork('testUser');
+    network = new P2PNetwork('testUser', 'local-peer-id');
   });
 
   describe('constructor', () => {
@@ -89,7 +102,7 @@ describe('P2PNetwork', () => {
 
   describe('compressInvite / decompressInvite', () => {
     it('should compress and decompress invite JSON', async () => {
-      const { compressInvite, decompressInvite } = await import('../p2p-network');
+      const { decompressInvite } = await import('../p2p-network');
       const original = JSON.stringify({ serverId: 'abc', name: 'Test Server' });
       const compressed = await compressInvite(original);
       expect(compressed).toBeDefined();
@@ -99,7 +112,6 @@ describe('P2PNetwork', () => {
     });
 
     it('should produce shorter output for repetitive data', async () => {
-      const { compressInvite } = await import('../p2p-network');
       const longJson = JSON.stringify({ data: 'A'.repeat(500) });
       const compressed = await compressInvite(longJson);
       expect(compressed.length).toBeLessThan(longJson.length);
@@ -117,26 +129,23 @@ describe('P2PNetwork', () => {
     });
   });
 
-  describe('getConnectionStatus', () => {
-    it('should return disconnected when not initialized', () => {
-      expect(network.getConnectionStatus()).toBe('disconnected');
+  describe('createServer and sendMessage', () => {
+    it('awaits getOrCreateChannelDoc before calling yjs.addChannelMessage', async () => {
+      const server = await network.createServer('Engineering');
+      const channelId = server.channels[0].id;
+
+      await network.sendMessage(server.id, channelId, 'Hello team');
+
+      expect(mockGetOrCreateChannelDoc).toHaveBeenCalledWith(server.id, channelId);
+      expect(mockAddChannelMessage).toHaveBeenCalledTimes(1);
+      const [passedDoc, passedMsg] = mockAddChannelMessage.mock.calls[0];
+      expect(passedDoc).toBe(mockDoc);
+      expect(passedMsg.content).toBe('Hello team');
+      expect(passedMsg.author.id).toBe('local-peer-id');
     });
   });
 
-  describe('getServers', () => {
-    it('should return empty array initially', () => {
-      expect(network.getServers()).toEqual([]);
-    });
-  });
-
-  describe('getOnlinePeers', () => {
-    it('should include local peer even when no connections', () => {
-      expect(network.getOnlinePeers()).toHaveLength(1);
-      expect(network.getOnlinePeers()[0].id).toBe(network.getLocalPeer().id);
-    });
-  });
-
-  describe('permission checks', () => {
+  describe('security & authorization checks', () => {
     it('should reject sendMessage when not server member', async () => {
       await expect(
         network.sendMessage('nonexistent-server', 'general', 'hello')
@@ -148,22 +157,168 @@ describe('P2PNetwork', () => {
         network.generateInvite('nonexistent-server')
       ).rejects.toThrow('not found');
     });
+
+    it('rejects invite missing signature when hostVerifyKey is present', async () => {
+      const signing = await generateSigningKeyPair();
+      const unsignedInvite = await compressInvite(JSON.stringify({
+        payload: {
+          serverId: 'srv-1',
+          serverName: 'Test',
+          hostPeerId: 'remote-host',
+          hostUsername: 'Alice',
+          hostVerifyKey: signing.verifyKeyString,
+          timestamp: Date.now(),
+        },
+        signature: '',
+      }));
+
+      await expect(network.joinServer(unsignedInvite)).rejects.toThrow(/missing a signature/i);
+    });
+
+    it('rejects invite with tampered payload', async () => {
+      const signing = await generateSigningKeyPair();
+      const payload = {
+        serverId: 'srv-1',
+        serverName: 'Legit',
+        hostPeerId: 'remote-host',
+        hostUsername: 'Alice',
+        hostVerifyKey: signing.verifyKeyString,
+        timestamp: Date.now(),
+      };
+      const signature = await signData(JSON.stringify(payload), signing.signingKey);
+      const tampered = await compressInvite(JSON.stringify({
+        payload: { ...payload, serverName: 'Tampered' },
+        signature,
+      }));
+
+      await expect(network.joinServer(tampered)).rejects.toThrow(/invalid signature/i);
+    });
+
+    it('rejects joining own peer ID', async () => {
+      const invite = await compressInvite(JSON.stringify({
+        payload: {
+          serverId: 'srv-self',
+          serverName: 'Self',
+          hostPeerId: 'local-peer-id',
+          hostUsername: 'testUser',
+          timestamp: Date.now(),
+        },
+      }));
+      await expect(network.joinServer(invite)).rejects.toThrow(/own peer ID/i);
+    });
+
+    it('ignores server-updated and server-deleted from non-host peer', () => {
+      const internals = network as unknown as P2PNetworkInternals;
+      const server: Server = {
+        id: 'srv-auth',
+        name: 'Original Name',
+        channels: [{ id: 'general', name: 'general', type: 'text' }],
+        members: [{ id: 'real-host', username: 'Host' }, { id: 'attacker', username: 'Eve' }],
+        memberRoles: { 'real-host': ['owner'], attacker: ['member'] },
+        hostId: 'real-host',
+        createdAt: Date.now(),
+      };
+      internals.servers.set(server.id, server);
+
+      internals.handleEvent(
+        { type: 'server-updated', payload: { serverId: 'srv-auth', patch: { name: 'Hacked' } }, timestamp: Date.now() },
+        'attacker'
+      );
+      expect(network.getServer('srv-auth')?.name).toBe('Original Name');
+
+      internals.handleEvent(
+        { type: 'server-deleted', payload: { serverId: 'srv-auth' }, timestamp: Date.now() },
+        'attacker'
+      );
+      expect(network.getServer('srv-auth')).toBeDefined();
+    });
+
+    it('ignores spoofed chat messages where author.id does not match fromPeerId', () => {
+      const internals = network as unknown as P2PNetworkInternals;
+      const server: Server = {
+        id: 'srv-chat',
+        name: 'Room',
+        channels: [{ id: 'general', name: 'general', type: 'text' }],
+        members: [
+          { id: 'real-host', username: 'Host' },
+          { id: 'peer-a', username: 'Alice' },
+          { id: 'peer-b', username: 'Bob' },
+        ],
+        memberRoles: { 'real-host': ['owner'] },
+        hostId: 'real-host',
+        createdAt: Date.now(),
+      };
+      internals.servers.set(server.id, server);
+
+      internals.handleEvent(
+        {
+          type: 'message',
+          payload: {
+            id: 'msg-spoof',
+            serverId: 'srv-chat',
+            channelId: 'general',
+            author: { id: 'peer-a', username: 'Alice' },
+            content: 'Spoofed',
+            seq: 1,
+            timestamp: Date.now(),
+          },
+          timestamp: Date.now(),
+        },
+        'peer-b'
+      );
+
+      expect(network.getMessages('srv-chat', 'general')).toHaveLength(0);
+    });
+
+    it('rejects oversized or malformed chunked frames in receiveChunk', () => {
+      const internals = network as unknown as P2PNetworkInternals;
+
+      // _total > 1024 should be rejected
+      const hugeTotal = JSON.stringify({ _chunkId: 'c1', _index: 0, _total: 50000, _data: 'abc' });
+      expect(internals.receiveChunk('peer-x', hugeTotal)).toBeNull();
+
+      // Out-of-bounds _index should be rejected
+      const badIndex = JSON.stringify({ _chunkId: 'c2', _index: 5, _total: 2, _data: 'abc' });
+      expect(internals.receiveChunk('peer-x', badIndex)).toBeNull();
+
+      // Valid chunk assembly should work
+      const part0 = JSON.stringify({ _chunkId: 'c3', _index: 0, _total: 2, _data: '{"ok":' });
+      const part1 = JSON.stringify({ _chunkId: 'c3', _index: 1, _total: 2, _data: 'true}' });
+      expect(internals.receiveChunk('peer-x', part0)).toBeNull();
+      expect(internals.receiveChunk('peer-x', part1)).toBe('{"ok":true}');
+    });
+
+    it('restores host status and memberRoles from persisted data', async () => {
+      mockStorage.loadServers.mockResolvedValueOnce([
+        {
+          id: 'srv-restored',
+          name: 'Restored Guild',
+          channels: [{ id: 'general', name: 'general', type: 'text' }],
+          members: [{ id: 'local-peer-id', username: 'testUser' }],
+          memberRoles: { 'local-peer-id': ['owner'] },
+          hostId: 'local-peer-id',
+          createdAt: 1000,
+        },
+      ]);
+
+      await network.loadPersistedData();
+
+      expect(network.getConnectionStatus()).toBe('host');
+      expect(network.isServerHost('srv-restored')).toBe(true);
+      expect(network.getServer('srv-restored')?.memberRoles?.['local-peer-id']).toEqual(['owner']);
+    });
   });
 
-  describe('pending DM queue', () => {
+  describe('pending DM queue & getters', () => {
     it('should start with zero pending messages', () => {
       expect(network.getPendingDMCount()).toBe(0);
       expect(network.getPendingDMCount('some-peer')).toBe(0);
     });
-  });
 
-  describe('getAvailablePeersForDM', () => {
     it('should return empty array when no servers', () => {
       expect(network.getAvailablePeersForDM()).toEqual([]);
     });
-  });
 
-  describe('loadOlderMessages', () => {
     it('should return empty array for nonexistent channel', async () => {
       const msgs = await network.loadOlderMessages('s1', 'c1');
       expect(msgs).toEqual([]);
@@ -173,8 +328,7 @@ describe('P2PNetwork', () => {
   describe('disconnect', () => {
     it('should clean up state', async () => {
       await network.disconnect();
-      const servers = network.getServers();
-      expect(servers).toHaveLength(0);
+      expect(network.getServers()).toHaveLength(0);
       expect(network.getOnlinePeers()).toHaveLength(1);
     });
   });

@@ -9,8 +9,10 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
-import { Copy, Download, LogOut, QrCode, Shield, Wifi, User } from 'lucide-react';
+import { Bell, Copy, Download, LogOut, QrCode, Shield, Wifi, User } from 'lucide-react';
 import QRCode from 'qrcode';
+import { formatProfileURI } from '@/lib/qr';
+import { getNotificationPermission, requestNotificationPermission } from '@/hooks/use-notifications';
 
 interface SettingsDialogProps {
   open: boolean;
@@ -21,11 +23,20 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const { localPeer, connectionStatus, disconnect } = useP2P();
   const [confirmingLogout, setConfirmingLogout] = useState(false);
   const [showQR, setShowQR] = useState(false);
+  const [notifPermission, setNotifPermission] = useState<NotificationPermission | 'unsupported'>(() =>
+    getNotificationPermission()
+  );
   const qrCanvasRef = useRef<HTMLCanvasElement>(null);
 
   const profileLink = localPeer
-    ? `local-echo-profile://${localPeer.id}@${localPeer.username}`
+    ? formatProfileURI(localPeer.id, localPeer.username)
     : '';
+
+  useEffect(() => {
+    if (open) {
+      setNotifPermission(getNotificationPermission());
+    }
+  }, [open]);
 
   useEffect(() => {
     if (!showQR || !qrCanvasRef.current || !profileLink) return;
@@ -33,13 +44,17 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
       width: 200,
       margin: 2,
       color: { dark: '#000', light: '#fff' },
-    });
+    }).catch(() => toast.error('Failed to render QR code'));
   }, [showQR, profileLink]);
 
   const copyPeerId = async () => {
     if (!localPeer?.id) return;
-    await navigator.clipboard.writeText(localPeer.id);
-    toast.success('Peer ID copied to clipboard');
+    try {
+      await navigator.clipboard.writeText(localPeer.id);
+      toast.success('Peer ID copied to clipboard');
+    } catch {
+      toast.error('Could not copy Peer ID');
+    }
   };
 
   const downloadQR = () => {
@@ -48,6 +63,16 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     link.download = `${localPeer.username}-profile-qr.png`;
     link.href = qrCanvasRef.current.toDataURL('image/png');
     link.click();
+  };
+
+  const handleEnableNotifications = async () => {
+    const result = await requestNotificationPermission();
+    setNotifPermission(result);
+    if (result === 'granted') {
+      toast.success('Desktop notifications enabled');
+    } else if (result === 'denied') {
+      toast.error('Notifications are blocked in browser settings');
+    }
   };
 
   const handleLogout = async () => {
@@ -69,7 +94,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             Settings
           </DialogTitle>
           <DialogDescription>
-            Manage your identity and session.
+            Manage your identity, notifications, and session.
           </DialogDescription>
         </DialogHeader>
 
@@ -85,6 +110,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             <button
               type="button"
               onClick={copyPeerId}
+              aria-label="Copy Peer ID"
               className="w-full flex items-center justify-between gap-2 p-2 rounded-md bg-background border border-border hover:bg-channel-hover transition-colors"
             >
               <span className="text-xs font-mono text-muted-foreground truncate">
@@ -96,7 +122,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               Share your Peer ID to receive direct messages.
             </p>
 
-            <Button variant="outline" size="sm" onClick={() => setShowQR(!showQR)} className="w-full gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={() => setShowQR(!showQR)} className="w-full gap-2">
               <QrCode className="w-4 h-4" />
               {showQR ? 'Hide QR Code' : 'Show Profile QR'}
             </Button>
@@ -107,7 +133,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
                 <p className="text-xs text-muted-foreground text-center">
                   Scan this code to start a direct message
                 </p>
-                <Button variant="ghost" size="sm" onClick={downloadQR} className="gap-2">
+                <Button type="button" variant="ghost" size="sm" onClick={downloadQR} className="gap-2">
                   <Download className="w-3.5 h-3.5" />
                   Save QR
                 </Button>
@@ -125,17 +151,42 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
               <span className="capitalize text-foreground">{connectionStatus}</span>
             </div>
             <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Protocol</span>
+              <span className="text-muted-foreground">Transport</span>
               <span className="text-foreground">WebRTC P2P</span>
             </div>
             <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Encryption</span>
-              <span className="text-success">E2E Enabled</span>
+              <span className="text-muted-foreground">Direct Messages</span>
+              <span className="text-success">E2E Encrypted</span>
             </div>
           </div>
 
+          {/* Notifications */}
+          {notifPermission !== 'unsupported' && (
+            <div className="p-3 rounded-lg bg-secondary/50 border border-border flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-sm">
+                <Bell className="w-4 h-4 text-muted-foreground" />
+                <div>
+                  <p className="font-medium text-foreground">Desktop notifications</p>
+                  <p className="text-xs text-muted-foreground capitalize">
+                    {notifPermission === 'granted'
+                      ? 'Enabled for incoming DMs'
+                      : notifPermission === 'denied'
+                        ? 'Blocked in browser settings'
+                        : 'Not enabled'}
+                  </p>
+                </div>
+              </div>
+              {notifPermission === 'default' && (
+                <Button type="button" variant="outline" size="sm" onClick={handleEnableNotifications}>
+                  Enable
+                </Button>
+              )}
+            </div>
+          )}
+
           {/* Logout */}
           <Button
+            type="button"
             variant={confirmingLogout ? 'destructive' : 'outline'}
             onClick={handleLogout}
             className="w-full"

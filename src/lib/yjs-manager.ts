@@ -10,7 +10,12 @@ export type YjsSyncMessage =
 export type YjsChangeCallback = (channelKey: string, kind: 'message' | 'dm') => void;
 
 function toBase64(bytes: Uint8Array): string {
-  return btoa(String.fromCharCode(...bytes));
+  const CHUNK = 0x8000;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
 }
 
 function fromBase64(s: string): Uint8Array {
@@ -67,7 +72,7 @@ export class YjsManager {
     return this.getOrCreateDoc(key, 'dm');
   }
 
-  private async getOrCreateDoc(key: string, kind: 'message' | 'dm'): Promise<Y.Doc> {
+  private async getOrCreateDoc(key: string, _kind: 'message' | 'dm'): Promise<Y.Doc> {
     const existing = this.docs.get(key);
     if (existing) return existing.doc;
 
@@ -80,10 +85,9 @@ export class YjsManager {
     // Listen for local changes (not originating from remote sync)
     doc.on('update', (update: Uint8Array, origin: unknown) => {
       if (origin === 'remote') return;
-      if (this.onSyncOutgoing) {
+      if (origin === 'local' && this.onSyncOutgoing) {
         this.onSyncOutgoing({ type: 'yjs-update', channelKey: key, update: toBase64(update) });
       }
-      this.notifyChange(key, kind);
     });
 
     this.docs.set(key, { doc, provider });
@@ -92,6 +96,10 @@ export class YjsManager {
 
   addChannelMessage(doc: Y.Doc, msg: Message): void {
     const messages = doc.getArray('messages');
+    for (let i = 0; i < messages.length; i++) {
+      const existing = messages.get(i) as Y.Map<unknown>;
+      if (existing.get('id') === msg.id) return;
+    }
     doc.transact(() => {
       const entry = new Y.Map([
         ['id', msg.id],
@@ -107,6 +115,10 @@ export class YjsManager {
 
   addDMMessage(doc: Y.Doc, dm: DirectMessage): void {
     const messages = doc.getArray('messages');
+    for (let i = 0; i < messages.length; i++) {
+      const existing = messages.get(i) as Y.Map<unknown>;
+      if (existing.get('id') === dm.id) return;
+    }
     doc.transact(() => {
       const entry = new Y.Map([
         ['id', dm.id],
@@ -171,35 +183,39 @@ export class YjsManager {
 
   /** Accept a remote sync message along with the sending peerId for routing the reply. */
   handleSyncMessage(msg: YjsSyncMessage, fromPeerId?: string): void {
-    switch (msg.type) {
-      case 'yjs-sync-step1': {
-        const doc = this.docs.get(msg.channelKey)?.doc;
-        if (!doc) return;
-        const remoteSV = fromBase64(msg.sv);
-        const update = Y.encodeStateAsUpdate(doc, remoteSV);
-        if (update.byteLength > 0 && this.onSyncOutgoing) {
-          this.onSyncOutgoing({ type: 'yjs-sync-step2', channelKey: msg.channelKey, update: toBase64(update), targetPeerId: fromPeerId });
+    try {
+      switch (msg.type) {
+        case 'yjs-sync-step1': {
+          const doc = this.docs.get(msg.channelKey)?.doc;
+          if (!doc) return;
+          const remoteSV = fromBase64(msg.sv);
+          const update = Y.encodeStateAsUpdate(doc, remoteSV);
+          if (update.byteLength > 0 && this.onSyncOutgoing) {
+            this.onSyncOutgoing({ type: 'yjs-sync-step2', channelKey: msg.channelKey, update: toBase64(update), targetPeerId: fromPeerId });
+          }
+          // Also initiate reverse sync if we haven't yet
+          if (fromPeerId && !this._syncingPeers.has(`${msg.channelKey}:${fromPeerId}`)) {
+            this._syncingPeers.add(`${msg.channelKey}:${fromPeerId}`);
+            this.sendSyncStep1(msg.channelKey, fromPeerId);
+          }
+          break;
         }
-        // Also initiate reverse sync if we haven't yet
-        if (fromPeerId && !this._syncingPeers.has(`${msg.channelKey}:${fromPeerId}`)) {
-          this._syncingPeers.add(`${msg.channelKey}:${fromPeerId}`);
-          this.sendSyncStep1(msg.channelKey, fromPeerId);
+        case 'yjs-sync-step2':
+        case 'yjs-update': {
+          const entry = this.docs.get(msg.channelKey);
+          if (!entry) return;
+          const update = fromBase64(msg.update);
+          Y.applyUpdate(entry.doc, update, 'remote');
+          const kind = msg.channelKey.startsWith('dm:') ? 'dm' : 'message';
+          this.notifyChange(msg.channelKey, kind);
+          if (fromPeerId) {
+            this._syncingPeers.delete(`${msg.channelKey}:${fromPeerId}`);
+          }
+          break;
         }
-        break;
       }
-      case 'yjs-sync-step2':
-      case 'yjs-update': {
-        const entry = this.docs.get(msg.channelKey);
-        if (!entry) return;
-        const update = fromBase64(msg.update);
-        Y.applyUpdate(entry.doc, update, 'remote');
-        const kind = msg.channelKey.startsWith('dm:') ? 'dm' : 'message';
-        this.notifyChange(msg.channelKey, kind);
-        if (fromPeerId) {
-          this._syncingPeers.delete(`${msg.channelKey}:${fromPeerId}`);
-        }
-        break;
-      }
+    } catch {
+      // Ignore malformed sync updates from untrusted peers
     }
   }
 

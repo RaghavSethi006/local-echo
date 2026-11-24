@@ -4,8 +4,8 @@ Run through this checklist with two browser windows (different usernames) to con
 
 ## Setup
 
-1. Open **Window A** (incognito/guest profile A) at `http://localhost:5173`
-2. Open **Window B** (incognito/guest profile B) at `http://localhost:5173`
+1. Open **Window A** (incognito/guest profile A) at `http://localhost:3000`
+2. Open **Window B** (incognito/guest profile B) at `http://localhost:3000`
 3. Open DevTools on both windows → **Application** → **Storage** → **IndexedDB** → clear `p2p-chat-store` if dirty
 4. Open `chrome://webrtc-internals` (or Edge equivalent `edge://webrtc-internals`) on **both** windows — this shows all RTCPeerConnections and DataChannels
 

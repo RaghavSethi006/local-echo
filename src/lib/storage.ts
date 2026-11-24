@@ -18,7 +18,12 @@ export interface StoredIdentity {
   peerId: string;
   username: string;
   publicKey?: string;
-  privateKey?: string; // Stored as JWK
+  privateKey?: string; // Legacy field
+  publicKeyJwk?: JsonWebKey;
+  privateKeyJwk?: JsonWebKey;
+  verifyKey?: string;
+  verifyKeyJwk?: JsonWebKey;
+  signingKeyJwk?: JsonWebKey;
   storageKeyJwk?: JsonWebKey; // AES-GCM key persisted as JWK
 }
 
@@ -28,6 +33,7 @@ export interface StoredServer {
   icon?: string;
   config?: CommunityConfig;
   channels: Channel[];
+  memberRoles?: Record<string, string[]>;
   hostId: string;
   createdAt: number;
   inviteCode?: string; // Store invite code for auto-rejoin

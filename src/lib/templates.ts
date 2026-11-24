@@ -1,7 +1,7 @@
 import type { CommunityConfig, CommunityRole, CreateCommunityInput } from '@/types/community';
 import { ALL_PERMISSIONS } from '@/types/community';
 
-export function createDefaultCommunityConfig(input: CreateCommunityInput, ownerId: string): CommunityConfig {
+export function createDefaultCommunityConfig(input: CreateCommunityInput, _ownerId: string): CommunityConfig {
   const roles: CommunityRole[] = [
     {
       id: 'owner',

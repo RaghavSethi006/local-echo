@@ -14,14 +14,15 @@ export function UsernameSetup() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!username.trim()) {
+    const trimmed = username.trim();
+    if (!trimmed) {
       toast.error('Please enter a username');
       return;
     }
 
     setIsInitializing(true);
     try {
-      await initialize(username.trim());
+      await initialize(trimmed);
       toast.success('Welcome to OffGrid!');
     } catch {
       toast.error('Failed to initialize. Please try again.');
@@ -47,11 +48,11 @@ export function UsernameSetup() {
       <div className="w-full max-w-md space-y-8 animate-in">
         {/* Logo & Title */}
         <div className="text-center space-y-5">
-          <div className="w-20 h-20 mx-auto rounded-3xl gradient-primary flex items-center justify-center shadow-glow animate-float text-primary-foreground">
+          <div className="w-20 h-20 mx-auto rounded-3xl gradient-primary flex items-center justify-center shadow-glow text-primary-foreground">
             <OffGridLogo size={36} />
           </div>
           <div>
-            <h1 className="text-3xl font-bold text-gradient">OffGrid</h1>
+            <h1 className="text-3xl font-bold tracking-tight text-gradient">OffGrid</h1>
             <p className="text-muted-foreground mt-2">
               P2P communities, off the grid
             </p>
@@ -71,6 +72,7 @@ export function UsernameSetup() {
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="Enter username..."
                 className="h-12 text-lg"
+                maxLength={32}
                 autoFocus
               />
               <p className="text-xs text-muted-foreground">
@@ -97,6 +99,7 @@ export function UsernameSetup() {
           {hasStoredIdentity && (
             <div className="mt-4 pt-4 border-t border-border">
               <Button
+                type="button"
                 onClick={handleRestore}
                 variant="outline"
                 className="w-full h-12 text-base"

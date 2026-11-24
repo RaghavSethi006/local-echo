@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react';
+import { useRef, useState } from 'react';
 import { useP2P } from '@/contexts/P2PContext';
 import {
   Dialog,
@@ -13,7 +13,8 @@ import { Label } from '@/components/ui/label';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import { Camera, Link, Loader2, Upload } from 'lucide-react';
-import jsQR from 'jsqr';
+import { useQRScanner } from '@/hooks/use-qr-scanner';
+import { parseProfileQR } from '@/lib/qr';
 
 interface JoinServerDialogProps {
   open: boolean;
@@ -24,48 +25,31 @@ export function JoinServerDialog({ open, onOpenChange }: JoinServerDialogProps) 
   const { joinServer, startDMByPeerId } = useP2P();
   const [inviteCode, setInviteCode] = useState('');
   const [isJoining, setIsJoining] = useState(false);
-  const [scanning, setScanning] = useState(false);
   const [activeTab, setActiveTab] = useState('paste');
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const scanningRef = useRef(false);
-  const rafRef = useRef<number | null>(null);
-
-  const stopCamera = () => {
-    scanningRef.current = false;
-    if (rafRef.current !== null) {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(t => t.stop());
-      streamRef.current = null;
-    }
-    setScanning(false);
-  };
-
-  const handleProfileQR = async (link: string) => {
-    const rest = link.slice('local-echo-profile://'.length);
-    const atIdx = rest.lastIndexOf('@');
-    if (atIdx < 0) return false;
-    const peerId = rest.slice(0, atIdx);
-    const username = rest.slice(atIdx + 1);
-    if (!peerId) return false;
-    await startDMByPeerId(peerId, username);
-    toast.success(`Started DM with ${username || peerId.slice(0, 8)}`);
-    onOpenChange(false);
-    return true;
-  };
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleQrResult = async (result: string) => {
-    if (result.startsWith('local-echo-profile://')) {
-      await handleProfileQR(result);
-    } else {
-      setInviteCode(result);
-      setActiveTab('paste');
-      toast.success('QR code scanned successfully');
+    const profile = parseProfileQR(result);
+    if (profile) {
+      try {
+        await startDMByPeerId(profile.peerId, profile.username);
+        toast.success(`Started DM with ${profile.username || profile.peerId.slice(0, 8)}`);
+        onOpenChange(false);
+      } catch (err: unknown) {
+        toast.error(err instanceof Error ? err.message : 'Failed to start DM');
+      }
+      return;
     }
+
+    setInviteCode(result);
+    setActiveTab('paste');
+    toast.success('QR code scanned successfully');
   };
+
+  const { scanning, videoRef, startCamera, stopCamera, handleFileUpload } = useQRScanner({
+    open: open && activeTab === 'scan',
+    onDecoded: handleQrResult,
+  });
 
   const handleJoin = async () => {
     if (!inviteCode.trim()) {
@@ -79,84 +63,10 @@ export function JoinServerDialog({ open, onOpenChange }: JoinServerDialogProps) 
       toast.success('Joined server successfully!');
       setInviteCode('');
       onOpenChange(false);
-    } catch {
-      toast.error('Failed to join server. Invalid invite code.');
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Failed to join server. Invalid invite code.');
     } finally {
       setIsJoining(false);
-    }
-  };
-
-  const decodeFromCanvas = (imageData: ImageData): string | null => {
-    const code = jsQR(imageData.data, imageData.width, imageData.height);
-    return code?.data || null;
-  };
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.naturalWidth;
-        canvas.height = img.naturalHeight;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-        ctx.drawImage(img, 0, 0);
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const result = decodeFromCanvas(imageData);
-        if (result) {
-          handleQrResult(result);
-        } else {
-          toast.error('Could not decode QR code from image');
-        }
-      };
-      img.src = event.target?.result as string;
-    };
-    reader.readAsDataURL(file);
-  };
-
-  const startCamera = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-      streamRef.current = stream;
-      setScanning(true);
-      scanningRef.current = true;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play();
-        scanFrame();
-      }
-    } catch {
-      toast.error('Camera access denied or unavailable');
-    }
-  };
-
-  const scanFrame = () => {
-    if (!scanningRef.current || !videoRef.current || !streamRef.current) return;
-    const video = videoRef.current;
-    if (video.readyState < video.HAVE_ENOUGH_DATA) {
-      rafRef.current = requestAnimationFrame(scanFrame);
-      return;
-    }
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      rafRef.current = requestAnimationFrame(scanFrame);
-      return;
-    }
-    ctx.drawImage(video, 0, 0);
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const result = decodeFromCanvas(imageData);
-    if (result) {
-      stopCamera();
-      handleQrResult(result);
-    } else {
-      rafRef.current = requestAnimationFrame(scanFrame);
     }
   };
 
@@ -173,7 +83,13 @@ export function JoinServerDialog({ open, onOpenChange }: JoinServerDialogProps) 
           </DialogDescription>
         </DialogHeader>
 
-        <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <Tabs
+          value={activeTab}
+          onValueChange={(nextTab) => {
+            setActiveTab(nextTab);
+            if (nextTab !== 'scan') stopCamera();
+          }}
+        >
           <TabsList className="w-full">
             <TabsTrigger value="paste" className="flex-1">Paste Code</TabsTrigger>
             <TabsTrigger value="scan" className="flex-1">Scan QR</TabsTrigger>
@@ -199,6 +115,7 @@ export function JoinServerDialog({ open, onOpenChange }: JoinServerDialogProps) 
                 <video ref={videoRef} className="w-full h-64 object-cover" playsInline muted />
                 <div className="absolute inset-0 border-2 border-primary/50 rounded-lg pointer-events-none" />
                 <Button
+                  type="button"
                   variant="outline"
                   size="sm"
                   onClick={stopCamera}
@@ -209,22 +126,27 @@ export function JoinServerDialog({ open, onOpenChange }: JoinServerDialogProps) 
               </div>
             ) : (
               <div className="space-y-3">
-                <Button onClick={startCamera} variant="outline" className="w-full gap-2">
+                <Button type="button" onClick={startCamera} variant="outline" className="w-full gap-2">
                   <Camera className="w-4 h-4" />
                   Open Camera
                 </Button>
-                <div className="relative">
-                  <Button variant="outline" className="w-full gap-2 relative">
-                    <Upload className="w-4 h-4" />
-                    Upload QR Image
-                  </Button>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleFileUpload}
-                    className="absolute inset-0 opacity-0 cursor-pointer"
-                  />
-                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full gap-2"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <Upload className="w-4 h-4" />
+                  Upload QR Image
+                </Button>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleFileUpload}
+                  className="sr-only"
+                  aria-label="Upload QR code image"
+                />
               </div>
             )}
           </TabsContent>
@@ -232,17 +154,17 @@ export function JoinServerDialog({ open, onOpenChange }: JoinServerDialogProps) 
 
         <div className="p-3 rounded-lg bg-secondary/50 border border-border">
           <p className="text-xs text-muted-foreground">
-            <strong className="text-foreground">Peer-to-Peer Connection</strong> — 
-            Joining will establish a direct connection with the server host. 
-            All messages are encrypted end-to-end.
+            <strong className="text-foreground">Peer-to-Peer Connection</strong> —
+            Joining will establish a direct connection with the server host.
+            Direct messages are end-to-end encrypted.
           </p>
         </div>
 
         <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+          <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={handleJoin} disabled={isJoining || !inviteCode.trim()}>
+          <Button type="button" onClick={handleJoin} disabled={isJoining || !inviteCode.trim()}>
             {isJoining ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />

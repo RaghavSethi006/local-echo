@@ -12,9 +12,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
-import { Switch } from '@/components/ui/switch';
 import { toast } from 'sonner';
-import { Loader2, Server, Sparkles } from 'lucide-react';
+import { Loader2, Server } from 'lucide-react';
 import {
   getTemplateChannels,
   type CreateCommunityInput,
@@ -27,7 +26,17 @@ interface CreateServerDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
-const templateIds: ServerTemplateId[] = ['gaming', 'developer', 'study', 'startup', 'ai-community', 'creator-community', 'enterprise-workspace', 'minimal', 'custom'];
+const templateIds: ServerTemplateId[] = [
+  'gaming',
+  'developer',
+  'study',
+  'startup',
+  'ai-community',
+  'creator-community',
+  'enterprise-workspace',
+  'minimal',
+  'custom',
+];
 const iconPresets = ['💬', '🚀', '🎮', '📚', '🤖', '🎨', '🏢', '✨'];
 
 export function CreateServerDialog({ open, onOpenChange }: CreateServerDialogProps) {
@@ -58,7 +67,7 @@ export function CreateServerDialog({ open, onOpenChange }: CreateServerDialogPro
     setIsCreating(true);
     try {
       await createServer(input);
-      toast.success(`Server "${serverName}" created`);
+      toast.success(`Server "${input.name}" created`);
       setServerName('');
       setDescription('');
       onOpenChange(false);
@@ -78,13 +87,13 @@ export function CreateServerDialog({ open, onOpenChange }: CreateServerDialogPro
             Create a Community
           </DialogTitle>
           <DialogDescription>
-            Build a P2P community with templates, branding, onboarding, safety defaults, roles, and automation scaffolding.
+            Build a local-first peer-to-peer community with preset channels, branding, and default roles.
           </DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-5 py-4 lg:grid-cols-[1.1fr_0.9fr]">
           <div className="space-y-4">
-            <div className="grid gap-3 sm:grid-cols-[80px_1fr]">
+            <div className="grid gap-3 sm:grid-cols-[128px_1fr]">
               <div className="space-y-2">
                 <Label>Icon</Label>
                 <div className="grid grid-cols-4 gap-1">
@@ -92,8 +101,10 @@ export function CreateServerDialog({ open, onOpenChange }: CreateServerDialogPro
                     <button
                       key={preset}
                       type="button"
+                      aria-label={`Select icon ${preset}`}
+                      aria-pressed={icon === preset}
                       onClick={() => setIcon(preset)}
-                      className={`h-9 rounded-lg border text-lg ${icon === preset ? 'border-primary bg-primary/10' : 'border-border bg-secondary'}`}
+                      className={`h-9 rounded-lg border text-lg transition-colors ${icon === preset ? 'border-primary bg-primary/10' : 'border-border bg-secondary hover:border-muted-foreground/40'}`}
                     >
                       {preset}
                     </button>
@@ -106,6 +117,12 @@ export function CreateServerDialog({ open, onOpenChange }: CreateServerDialogPro
                   id="serverName"
                   value={serverName}
                   onChange={(e) => setServerName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      void handleCreate();
+                    }
+                  }}
                   placeholder="My Awesome Server"
                   maxLength={48}
                 />
@@ -126,8 +143,9 @@ export function CreateServerDialog({ open, onOpenChange }: CreateServerDialogPro
 
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label>Template</Label>
+                <Label htmlFor="community-template">Template</Label>
                 <select
+                  id="community-template"
                   value={template}
                   onChange={(e) => setTemplate(e.target.value as ServerTemplateId)}
                   className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
@@ -138,8 +156,9 @@ export function CreateServerDialog({ open, onOpenChange }: CreateServerDialogPro
                 </select>
               </div>
               <div className="space-y-2">
-                <Label>Visibility</Label>
+                <Label htmlFor="community-visibility">Visibility</Label>
                 <select
+                  id="community-visibility"
                   value={visibility}
                   onChange={(e) => setVisibility(e.target.value as ServerVisibility)}
                   className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
@@ -169,16 +188,16 @@ export function CreateServerDialog({ open, onOpenChange }: CreateServerDialogPro
             </div>
             <div className="rounded-lg border border-border bg-background p-3 text-xs text-muted-foreground">
               <p className="font-medium text-foreground">P2P note</p>
-              <p>This community runs locally through the current host and syncs settings to connected peers.</p>
+              <p>This community runs locally through your browser as host and syncs directly to connected peers.</p>
             </div>
           </div>
         </div>
 
         <div className="flex justify-end gap-2">
-          <Button variant="ghost" onClick={() => onOpenChange(false)}>
+          <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={handleCreate} disabled={isCreating}>
+          <Button type="button" onClick={handleCreate} disabled={isCreating}>
             {isCreating ? (
               <>
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />

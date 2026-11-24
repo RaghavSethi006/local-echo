@@ -1,7 +1,7 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useP2P } from '@/contexts/P2PContext';
-import { Hash, Users } from 'lucide-react';
+import { ArrowDown, Hash, Loader2, Users } from 'lucide-react';
 import { MessageInput } from './MessageInput';
 import { MessageItem } from './MessageItem';
 import { VoiceChannelView } from './VoiceChannelView';
@@ -12,6 +12,8 @@ export function MessageArea() {
   const stickToBottomRef = useRef(true);
   const loadingOlderRef = useRef(false);
   const lastTopLoadKeyRef = useRef<string | null>(null);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
 
   const virtualizer = useVirtualizer({
     count: messages.length,
@@ -22,19 +24,25 @@ export function MessageArea() {
   });
 
   const virtualItems = virtualizer.getVirtualItems();
+  const oldestMessageId = messages[0]?.id;
+  const firstVisibleIndex = virtualItems[0]?.index;
 
-  // Auto-scroll to bottom on new messages
+  useEffect(() => {
+    stickToBottomRef.current = true;
+    lastTopLoadKeyRef.current = null;
+    setShowJumpToLatest(false);
+  }, [currentServer?.id, currentChannel?.id]);
+
+  // Auto-scroll to bottom on new messages when anchored
   useEffect(() => {
     if (messages.length === 0 || !stickToBottomRef.current) return;
     virtualizer.scrollToIndex(messages.length - 1, { align: 'end' });
   }, [messages.length, virtualizer]);
 
   useEffect(() => {
-    const firstItem = virtualItems[0];
-    const oldestMessageId = messages[0]?.id;
     if (
-      !firstItem ||
-      firstItem.index > 2 ||
+      firstVisibleIndex === undefined ||
+      firstVisibleIndex > 2 ||
       loadingOlderRef.current ||
       messages.length === 0 ||
       !oldestMessageId ||
@@ -45,15 +53,26 @@ export function MessageArea() {
 
     lastTopLoadKeyRef.current = oldestMessageId;
     loadingOlderRef.current = true;
+    setLoadingOlder(true);
     loadOlderMessages().finally(() => {
       loadingOlderRef.current = false;
+      setLoadingOlder(false);
     });
-  }, [loadOlderMessages, messages.length, virtualItems]);
+  }, [firstVisibleIndex, loadOlderMessages, messages.length, oldestMessageId]);
 
   const handleScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
-    stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    stickToBottomRef.current = nearBottom;
+    setShowJumpToLatest(!nearBottom && messages.length > 0);
+  };
+
+  const jumpToLatest = () => {
+    if (messages.length === 0) return;
+    stickToBottomRef.current = true;
+    setShowJumpToLatest(false);
+    virtualizer.scrollToIndex(messages.length - 1, { align: 'end' });
   };
 
   if (!currentServer || !currentChannel) {
@@ -81,8 +100,8 @@ export function MessageArea() {
   }
 
   return (
-    <main className="flex-1 flex flex-col bg-background min-w-0">
-      {/* Channel Header — only on desktop, mobile uses ChatLayout top bar */}
+    <main className="flex-1 flex flex-col bg-background min-w-0 relative">
+      {/* Channel Header — desktop only, mobile uses ChatLayout top bar */}
       <header className="hidden md:flex h-12 px-4 items-center justify-between border-b border-border shrink-0">
         <div className="flex items-center gap-2 min-w-0">
           <Hash className="w-5 h-5 text-muted-foreground flex-shrink-0" />
@@ -96,7 +115,7 @@ export function MessageArea() {
             </>
           )}
         </div>
-        <div className="flex items-center gap-2 text-muted-foreground text-xs">
+        <div className="flex items-center gap-2 text-muted-foreground text-xs tabular-nums">
           <Users className="w-4 h-4" />
           <span>{onlinePeers.length} online</span>
         </div>
@@ -105,6 +124,13 @@ export function MessageArea() {
       {/* Messages */}
       <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto">
         <div className="py-4">
+          {loadingOlder && (
+            <div className="flex items-center justify-center gap-2 py-2 text-xs text-muted-foreground">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              <span>Loading earlier messages...</span>
+            </div>
+          )}
+
           {/* Welcome Message */}
           {messages.length === 0 && (
             <div className="px-4 mb-6">
@@ -123,8 +149,7 @@ export function MessageArea() {
                   </div>
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  Messages are transmitted peer-to-peer with end-to-end encryption. 
-                  No central message server involved. Your data stays with your peers.
+                  Messages sync peer-to-peer across your community via WebRTC without a central server. Your history persists locally on your device.
                 </p>
               </div>
             </div>
@@ -163,6 +188,17 @@ export function MessageArea() {
           </div>
         </div>
       </div>
+
+      {showJumpToLatest && (
+        <button
+          type="button"
+          onClick={jumpToLatest}
+          className="absolute bottom-20 right-6 z-10 inline-flex items-center gap-1.5 rounded-full bg-card border border-border px-3 py-1.5 text-xs font-medium text-foreground shadow-md hover:bg-secondary transition-colors"
+        >
+          <ArrowDown className="w-3.5 h-3.5 text-primary" />
+          Jump to latest
+        </button>
+      )}
 
       {/* Message Input */}
       <MessageInput />

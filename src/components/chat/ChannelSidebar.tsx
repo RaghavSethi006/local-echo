@@ -1,10 +1,11 @@
-import { useState, lazy, Suspense, useCallback } from 'react';
+import { useState, useEffect, lazy, Suspense, useCallback } from 'react';
 import { useP2P } from '@/contexts/P2PContext';
 import { cn } from '@/lib/utils';
 import { Hash, Volume2, ChevronDown, Settings, UserPlus, Search, ScanLine } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { toast } from 'sonner';
+import { parseProfileQR } from '@/lib/qr';
 
 const ServerSettingsDialog = lazy(() => import('./ServerSettingsDialog').then(m => ({ default: m.ServerSettingsDialog })));
 const SearchDialog = lazy(() => import('./SearchDialog').then(m => ({ default: m.SearchDialog })));
@@ -13,7 +14,16 @@ const SettingsDialog = lazy(() => import('./SettingsDialog').then(m => ({ defaul
 const ScanQRDialog = lazy(() => import('./ScanQRDialog').then(m => ({ default: m.ScanQRDialog })));
 
 export function ChannelSidebar() {
-  const { currentServer, currentChannel, selectChannel, isCurrentServerHost, localPeer, joinServer, startDMByPeerId } = useP2P();
+  const {
+    currentServer,
+    currentChannel,
+    selectChannel,
+    isCurrentServerHost,
+    localPeer,
+    joinServer,
+    startDMByPeerId,
+    isInVoiceChannel,
+  } = useP2P();
   const [textChannelsOpen, setTextChannelsOpen] = useState(true);
   const [voiceChannelsOpen, setVoiceChannelsOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -22,25 +32,34 @@ export function ChannelSidebar() {
   const [inviteOpen, setInviteOpen] = useState(false);
   const [scanOpen, setScanOpen] = useState(false);
 
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setSearchOpen(prev => !prev);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
   const handleScanResult = useCallback(async (result: string) => {
-    if (result.startsWith('local-echo-profile://')) {
-      const rest = result.slice('local-echo-profile://'.length);
-      const atIdx = rest.lastIndexOf('@');
-      if (atIdx >= 0) {
-        const peerId = rest.slice(0, atIdx);
-        const username = rest.slice(atIdx + 1);
-        if (peerId) {
-          await startDMByPeerId(peerId, username);
-          toast.success(`Started DM with ${username || peerId.slice(0, 8)}`);
-        }
-      }
-    } else {
+    const profile = parseProfileQR(result);
+    if (profile) {
       try {
-        await joinServer(result);
-        toast.success('Joined server successfully!');
-      } catch {
-        toast.error('Failed to join server from QR code');
+        await startDMByPeerId(profile.peerId, profile.username);
+        toast.success(`Started DM with ${profile.username || profile.peerId.slice(0, 8)}`);
+      } catch (err: unknown) {
+        toast.error(err instanceof Error ? err.message : 'Failed to start DM');
       }
+      return;
+    }
+
+    try {
+      await joinServer(result);
+      toast.success('Joined server successfully!');
+    } catch {
+      toast.error('Failed to join server from QR code');
     }
   }, [joinServer, startDMByPeerId]);
 
@@ -59,10 +78,6 @@ export function ChannelSidebar() {
   const textChannels = currentServer.channels.filter(c => c.type === 'text');
   const voiceChannels = currentServer.channels.filter(c => c.type === 'voice');
 
-  const handleInvite = () => {
-    setInviteOpen(true);
-  };
-
   return (
     <aside className="w-60 max-w-[75vw] bg-card flex flex-col border-r border-border">
       {/* Server Header */}
@@ -75,16 +90,20 @@ export function ChannelSidebar() {
         </div>
         <div className="flex items-center gap-1">
           <button
+            type="button"
             onClick={() => setSearchOpen(true)}
-            className="p-1 text-muted-foreground hover:text-foreground transition-colors"
-            aria-label="Search messages"
+            className="p-1 text-muted-foreground hover:text-foreground transition-colors rounded"
+            aria-label="Search messages (Ctrl+K)"
+            title="Search messages (Ctrl+K)"
           >
             <Search className="w-4 h-4" />
           </button>
           <button
+            type="button"
             onClick={() => setSettingsOpen(true)}
-            className="p-1 text-muted-foreground hover:text-foreground transition-colors"
+            className="p-1 text-muted-foreground hover:text-foreground transition-colors rounded"
             aria-label="Server settings"
+            title="Server settings"
           >
             <Settings className="w-4 h-4" />
           </button>
@@ -94,9 +113,10 @@ export function ChannelSidebar() {
       {/* Invite Button */}
       <div className="px-2 py-2">
         <Button
+          type="button"
           variant="ghost"
           size="sm"
-          onClick={handleInvite}
+          onClick={() => setInviteOpen(true)}
           className="w-full justify-start gap-2 text-muted-foreground hover:text-foreground hover:bg-channel-hover"
         >
           <UserPlus className="w-4 h-4" />
@@ -110,8 +130,8 @@ export function ChannelSidebar() {
         <Collapsible open={textChannelsOpen} onOpenChange={setTextChannelsOpen}>
           <CollapsibleTrigger className="flex items-center gap-1 w-full px-1 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wide hover:text-foreground transition-colors">
             <ChevronDown className={cn(
-              "w-3 h-3 transition-transform",
-              !textChannelsOpen && "-rotate-90"
+              'w-3 h-3 transition-transform',
+              !textChannelsOpen && '-rotate-90'
             )} />
             Text Channels
           </CollapsibleTrigger>
@@ -119,13 +139,15 @@ export function ChannelSidebar() {
             {textChannels.map((channel) => (
               <button
                 key={channel.id}
+                type="button"
                 onClick={() => selectChannel(channel.id)}
+                aria-current={currentChannel?.id === channel.id ? 'page' : undefined}
                 className={cn(
-                  "w-full flex items-center gap-2 px-2 py-1.5 rounded-md",
-                  "text-muted-foreground transition-colors",
+                  'w-full flex items-center gap-2 px-2 py-1.5 rounded-md',
+                  'text-muted-foreground transition-colors',
                   currentChannel?.id === channel.id
-                    ? "bg-channel-hover text-foreground"
-                    : "hover:bg-channel-hover hover:text-secondary-foreground"
+                    ? 'bg-channel-hover text-foreground font-medium'
+                    : 'hover:bg-channel-hover hover:text-secondary-foreground'
                 )}
               >
                 <Hash className="w-4 h-4 flex-shrink-0" />
@@ -140,8 +162,8 @@ export function ChannelSidebar() {
           <Collapsible open={voiceChannelsOpen} onOpenChange={setVoiceChannelsOpen}>
             <CollapsibleTrigger className="flex items-center gap-1 w-full px-1 py-1 text-xs font-semibold text-muted-foreground uppercase tracking-wide hover:text-foreground transition-colors">
               <ChevronDown className={cn(
-                "w-3 h-3 transition-transform",
-                !voiceChannelsOpen && "-rotate-90"
+                'w-3 h-3 transition-transform',
+                !voiceChannelsOpen && '-rotate-90'
               )} />
               Voice Channels
             </CollapsibleTrigger>
@@ -149,16 +171,21 @@ export function ChannelSidebar() {
               {voiceChannels.map((channel) => (
                 <button
                   key={channel.id}
+                  type="button"
                   onClick={(e) => { e.stopPropagation(); selectChannel(channel.id); }}
+                  aria-current={currentChannel?.id === channel.id ? 'page' : undefined}
                   className={cn(
-                    "group flex items-center gap-2 px-2 py-1.5 rounded-md w-full text-left",
-                    "hover:bg-sidebar-accent/50 transition-colors",
-                    currentChannel?.id === channel.id && "bg-sidebar-accent text-sidebar-accent-foreground"
+                    'group flex items-center gap-2 px-2 py-1.5 rounded-md w-full text-left',
+                    'text-muted-foreground hover:bg-sidebar-accent/50 transition-colors',
+                    currentChannel?.id === channel.id && 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
                   )}
-                  title={`Join ${channel.name}`}
+                  title={`Open ${channel.name}`}
                 >
                   <Volume2 className="w-4 h-4 flex-shrink-0" />
-                  <span className="truncate text-sm">{channel.name}</span>
+                  <span className="truncate text-sm flex-1">{channel.name}</span>
+                  {isInVoiceChannel && currentChannel?.id === channel.id && (
+                    <span className="w-2 h-2 rounded-full bg-status-online flex-shrink-0" aria-label="Voice connected" />
+                  )}
                 </button>
               ))}
             </CollapsibleContent>
@@ -182,10 +209,10 @@ export function ChannelSidebar() {
             {isCurrentServerHost ? 'Hosting' : 'Online'}
           </p>
         </div>
-        <button onClick={() => setScanOpen(true)} className="p-1 text-muted-foreground hover:text-foreground transition-colors" aria-label="Scan QR code">
+        <button type="button" onClick={() => setScanOpen(true)} className="p-1 text-muted-foreground hover:text-foreground transition-colors rounded" aria-label="Scan QR code">
           <ScanLine className="w-4 h-4" />
         </button>
-        <button onClick={() => setProfileOpen(true)} className="p-1 text-muted-foreground hover:text-foreground transition-colors" aria-label="Profile settings">
+        <button type="button" onClick={() => setProfileOpen(true)} className="p-1 text-muted-foreground hover:text-foreground transition-colors rounded" aria-label="Profile settings">
           <Settings className="w-4 h-4" />
         </button>
       </div>

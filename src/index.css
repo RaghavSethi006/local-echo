@@ -1,12 +1,10 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 @layer base {
   :root {
-    /* Deep slate dark theme - Discord-inspired but unique */
+    /* Deep slate dark theme */
     --background: 220 20% 7%;
     --foreground: 210 20% 92%;
 
@@ -24,7 +22,7 @@
     --secondary-foreground: 210 20% 85%;
 
     --muted: 220 14% 18%;
-    --muted-foreground: 215 15% 55%;
+    --muted-foreground: 215 15% 62%;
 
     --accent: 187 80% 35%;
     --accent-foreground: 210 20% 95%;
@@ -54,12 +52,12 @@
     --sidebar-border: 220 14% 12%;
     --sidebar-ring: 187 94% 43%;
 
-    /* Custom tokens for Discord clone */
+    /* Custom tokens */
     --channel-hover: 220 16% 12%;
     --message-hover: 220 14% 9%;
     --online: 142 76% 42%;
     --idle: 38 92% 50%;
-    --offline: 220 10% 40%;
+    --offline: 220 10% 45%;
     --typing: 187 94% 43%;
 
     /* Glassmorphism */
@@ -91,7 +89,15 @@
 
   body {
     @apply bg-background text-foreground font-sans antialiased;
-    font-family: 'Inter', system-ui, sans-serif;
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  }
+
+  code, pre, .font-mono {
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
   }
 
   /* Custom scrollbar */
@@ -191,3 +197,13 @@
     @apply bg-[hsl(var(--offline))];
   }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+

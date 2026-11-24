@@ -6,6 +6,30 @@ export interface KeyPair {
   publicKeyString: string;
 }
 
+export interface SigningKeyPair {
+  signingKey: CryptoKey;
+  verifyKey: CryptoKey;
+  verifyKeyString: string;
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  const CHUNK = 0x8000;
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(base64: string): Uint8Array<ArrayBuffer> {
+  const binaryString = atob(base64);
+  const bytes = new Uint8Array(binaryString.length);
+  for (let i = 0; i < binaryString.length; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  return bytes;
+}
+
 export async function generateKeyPair(): Promise<KeyPair> {
   const keyPair = await window.crypto.subtle.generateKey(
     {
@@ -17,7 +41,7 @@ export async function generateKeyPair(): Promise<KeyPair> {
   );
 
   const publicKeyBuffer = await window.crypto.subtle.exportKey('raw', keyPair.publicKey);
-  const publicKeyString = btoa(String.fromCharCode(...new Uint8Array(publicKeyBuffer)));
+  const publicKeyString = bytesToBase64(new Uint8Array(publicKeyBuffer));
 
   return {
     publicKey: keyPair.publicKey,
@@ -26,27 +50,97 @@ export async function generateKeyPair(): Promise<KeyPair> {
   };
 }
 
-export async function generateSigningKeyPair(): Promise<{
-  signingKey: CryptoKey;
-  verifyKey: CryptoKey;
-  verifyKeyString: string;
+export async function exportKeyPairJwk(keyPair: KeyPair): Promise<{
+  publicKeyJwk: JsonWebKey;
+  privateKeyJwk: JsonWebKey;
+  publicKeyString: string;
 }> {
+  const [publicKeyJwk, privateKeyJwk] = await Promise.all([
+    window.crypto.subtle.exportKey('jwk', keyPair.publicKey),
+    window.crypto.subtle.exportKey('jwk', keyPair.privateKey),
+  ]);
+  return { publicKeyJwk, privateKeyJwk, publicKeyString: keyPair.publicKeyString };
+}
+
+export async function importKeyPairJwk(
+  publicKeyJwk: JsonWebKey,
+  privateKeyJwk: JsonWebKey,
+  publicKeyString?: string
+): Promise<KeyPair> {
+  const [publicKey, privateKey] = await Promise.all([
+    window.crypto.subtle.importKey(
+      'jwk',
+      publicKeyJwk,
+      { name: 'ECDH', namedCurve: 'P-256' },
+      true,
+      []
+    ),
+    window.crypto.subtle.importKey(
+      'jwk',
+      privateKeyJwk,
+      { name: 'ECDH', namedCurve: 'P-256' },
+      true,
+      ['deriveKey', 'deriveBits']
+    ),
+  ]);
+  const derivedPubStr =
+    publicKeyString ||
+    bytesToBase64(new Uint8Array(await window.crypto.subtle.exportKey('raw', publicKey)));
+  return { publicKey, privateKey, publicKeyString: derivedPubStr };
+}
+
+export async function generateSigningKeyPair(): Promise<SigningKeyPair> {
   const keyPair = await window.crypto.subtle.generateKey(
     { name: 'ECDSA', namedCurve: 'P-256' },
     true,
     ['sign', 'verify']
   );
   const verifyKeyBuffer = await window.crypto.subtle.exportKey('raw', keyPair.publicKey);
-  const verifyKeyString = btoa(String.fromCharCode(...new Uint8Array(verifyKeyBuffer)));
+  const verifyKeyString = bytesToBase64(new Uint8Array(verifyKeyBuffer));
   return { signingKey: keyPair.privateKey, verifyKey: keyPair.publicKey, verifyKeyString };
 }
 
+export async function exportSigningKeyPairJwk(keyPair: SigningKeyPair): Promise<{
+  verifyKeyJwk: JsonWebKey;
+  signingKeyJwk: JsonWebKey;
+  verifyKeyString: string;
+}> {
+  const [verifyKeyJwk, signingKeyJwk] = await Promise.all([
+    window.crypto.subtle.exportKey('jwk', keyPair.verifyKey),
+    window.crypto.subtle.exportKey('jwk', keyPair.signingKey),
+  ]);
+  return { verifyKeyJwk, signingKeyJwk, verifyKeyString: keyPair.verifyKeyString };
+}
+
+export async function importSigningKeyPairJwk(
+  verifyKeyJwk: JsonWebKey,
+  signingKeyJwk: JsonWebKey,
+  verifyKeyString?: string
+): Promise<SigningKeyPair> {
+  const [verifyKey, signingKey] = await Promise.all([
+    window.crypto.subtle.importKey(
+      'jwk',
+      verifyKeyJwk,
+      { name: 'ECDSA', namedCurve: 'P-256' },
+      true,
+      ['verify']
+    ),
+    window.crypto.subtle.importKey(
+      'jwk',
+      signingKeyJwk,
+      { name: 'ECDSA', namedCurve: 'P-256' },
+      true,
+      ['sign']
+    ),
+  ]);
+  const derivedVerifyStr =
+    verifyKeyString ||
+    bytesToBase64(new Uint8Array(await window.crypto.subtle.exportKey('raw', verifyKey)));
+  return { signingKey, verifyKey, verifyKeyString: derivedVerifyStr };
+}
+
 export async function importPublicKey(publicKeyString: string): Promise<CryptoKey> {
-  const binaryString = atob(publicKeyString);
-  const bytes = new Uint8Array(binaryString.length);
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
+  const bytes = base64ToBytes(publicKeyString);
 
   return window.crypto.subtle.importKey(
     'raw',
@@ -105,7 +199,7 @@ export async function signData(data: string, signingKey: CryptoKey): Promise<str
     signingKey,
     encoder.encode(data)
   );
-  return btoa(String.fromCharCode(...new Uint8Array(sig)));
+  return bytesToBase64(new Uint8Array(sig));
 }
 
 export async function verifySignature(
@@ -114,7 +208,7 @@ export async function verifySignature(
   verifyKeyString: string
 ): Promise<boolean> {
   try {
-    const keyBytes = Uint8Array.from(atob(verifyKeyString), c => c.charCodeAt(0));
+    const keyBytes = base64ToBytes(verifyKeyString);
     const verifyKey = await window.crypto.subtle.importKey(
       'raw',
       keyBytes,
@@ -122,7 +216,7 @@ export async function verifySignature(
       true,
       ['verify']
     );
-    const sigBytes = Uint8Array.from(atob(signature), c => c.charCodeAt(0));
+    const sigBytes = base64ToBytes(signature);
     const encoder = new TextEncoder();
     return await window.crypto.subtle.verify(
       { name: 'ECDSA', hash: 'SHA-256' },
@@ -152,15 +246,11 @@ export async function encrypt(data: string, key: CryptoKey): Promise<string> {
   combined.set(iv);
   combined.set(new Uint8Array(encryptedBuffer), iv.length);
 
-  return btoa(String.fromCharCode(...combined));
+  return bytesToBase64(combined);
 }
 
 export async function decrypt(encryptedData: string, key: CryptoKey): Promise<string> {
-  const binaryString = atob(encryptedData);
-  const bytes = new Uint8Array(binaryString.length);
-  for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
-  }
+  const bytes = base64ToBytes(encryptedData);
 
   const iv = bytes.slice(0, 12);
   const data = bytes.slice(12);

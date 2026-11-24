@@ -2,6 +2,7 @@ import { useState, lazy, Suspense } from 'react';
 import { useP2P } from '@/contexts/P2PContext';
 import { cn } from '@/lib/utils';
 import { getAvatarColor } from '@/lib/avatar-color';
+import { formatConversationTime } from '@/lib/date';
 import { Plus, Search, Settings, MessageCircle, Wifi, Radio } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
@@ -22,25 +23,9 @@ export function DMList() {
 
   const getConnectionIcon = (type: 'direct' | 'relay' | 'disconnected') => {
     switch (type) {
-      case 'direct': return <Wifi className="w-3 h-3 text-success" />;
-      case 'relay': return <Radio className="w-3 h-3 text-warning" />;
+      case 'direct': return <Wifi className="w-3 h-3 text-success" aria-label="Direct P2P" />;
+      case 'relay': return <Radio className="w-3 h-3 text-warning" aria-label="Relayed" />;
       default: return null;
-    }
-  };
-
-  const formatTime = (timestamp: number) => {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24));
-    
-    if (diffDays === 0) {
-      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    } else if (diffDays === 1) {
-      return 'Yesterday';
-    } else if (diffDays < 7) {
-      return date.toLocaleDateString([], { weekday: 'short' });
-    } else {
-      return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
     }
   };
 
@@ -48,7 +33,7 @@ export function DMList() {
     <aside className="w-60 max-w-[75vw] bg-card flex flex-col border-r border-border">
       {/* Header */}
       <div className="h-12 px-4 flex items-center justify-between border-b border-border shadow-sm">
-        <h2 className="font-semibold text-foreground">Direct Messages</h2>
+        <h2 className="font-semibold text-foreground text-sm">Direct Messages</h2>
       </div>
 
       {/* Search */}
@@ -60,6 +45,7 @@ export function DMList() {
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Find or start a conversation"
+            aria-label="Search conversations"
             className="w-full h-8 pl-8 pr-3 rounded-md bg-secondary text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
           />
         </div>
@@ -68,6 +54,7 @@ export function DMList() {
       {/* New DM Button */}
       <div className="px-2 pb-2">
         <Button
+          type="button"
           variant="ghost"
           size="sm"
           onClick={() => setShowNewDMDialog(true)}
@@ -94,27 +81,29 @@ export function DMList() {
           filteredConversations.map((conv) => (
             <button
               key={conv.peerId.id}
+              type="button"
               onClick={() => openDM(conv.peerId)}
+              aria-current={currentDMPeer?.id === conv.peerId.id ? 'page' : undefined}
               className={cn(
-                "w-full flex items-center gap-3 px-2 py-2 rounded-md",
-                "transition-colors text-left",
+                'w-full flex items-center gap-3 px-2 py-2 rounded-md',
+                'transition-colors text-left',
                 currentDMPeer?.id === conv.peerId.id
-                  ? "bg-channel-hover"
-                  : "hover:bg-channel-hover/50"
+                  ? 'bg-channel-hover'
+                  : 'hover:bg-channel-hover/50'
               )}
             >
               {/* Avatar */}
               <div className="relative flex-shrink-0">
                 <div className={cn(
-                  "w-8 h-8 rounded-full flex items-center justify-center",
-                  "text-xs font-semibold text-white",
+                  'w-8 h-8 rounded-full flex items-center justify-center',
+                  'text-xs font-semibold text-white',
                   getAvatarColor(conv.peerId.username)
                 )}>
                   {conv.peerId.username.charAt(0).toUpperCase()}
                 </div>
                 <div className={cn(
-                  "absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-card",
-                  isOnline(conv.peerId.id) ? "bg-status-online" : "bg-status-offline"
+                  'absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-card',
+                  isOnline(conv.peerId.id) ? 'bg-status-online' : 'bg-status-offline'
                 )} />
               </div>
 
@@ -122,8 +111,8 @@ export function DMList() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-1.5">
                   <span className={cn(
-                    "text-sm truncate",
-                    conv.unreadCount > 0 ? "font-semibold text-foreground" : "text-secondary-foreground"
+                    'text-sm truncate',
+                    conv.unreadCount > 0 ? 'font-semibold text-foreground' : 'text-secondary-foreground'
                   )}>
                     {conv.peerId.username}
                   </span>
@@ -131,8 +120,8 @@ export function DMList() {
                 </div>
                 {conv.lastMessage && (
                   <p className={cn(
-                    "text-xs truncate",
-                    conv.unreadCount > 0 ? "text-foreground" : "text-muted-foreground"
+                    'text-xs truncate',
+                    conv.unreadCount > 0 ? 'text-foreground' : 'text-muted-foreground'
                   )}>
                     {conv.lastMessage.from.id === localPeer?.id ? 'You: ' : ''}
                     {conv.lastMessage.content}
@@ -146,12 +135,12 @@ export function DMList() {
               {/* Meta */}
               <div className="flex-shrink-0 flex flex-col items-end gap-1">
                 {conv.lastMessage && (
-                  <span className="text-[10px] text-muted-foreground">
-                    {formatTime(conv.lastMessage.timestamp)}
+                  <span className="text-[10px] text-muted-foreground tabular-nums">
+                    {formatConversationTime(conv.lastMessage.timestamp)}
                   </span>
                 )}
                 {conv.unreadCount > 0 && (
-                  <div className="min-w-[18px] h-[18px] rounded-full bg-primary text-primary-foreground text-xs font-bold flex items-center justify-center px-1">
+                  <div className="min-w-[18px] h-[18px] rounded-full bg-primary text-primary-foreground text-xs font-bold tabular-nums flex items-center justify-center px-1">
                     {conv.unreadCount > 99 ? '99+' : conv.unreadCount}
                   </div>
                 )}
@@ -165,7 +154,7 @@ export function DMList() {
       <div className="h-14 px-2 flex items-center gap-2 bg-sidebar border-t border-border">
         <div className="relative">
           <div className={cn(
-            "w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-white",
+            'w-8 h-8 rounded-full flex items-center justify-center text-xs font-semibold text-white',
             getAvatarColor(localPeer?.username || '')
           )}>
             {localPeer?.username?.charAt(0).toUpperCase() || '?'}
@@ -178,7 +167,12 @@ export function DMList() {
           </p>
           <p className="text-xs text-muted-foreground">Online</p>
         </div>
-        <button onClick={() => setShowSettings(true)} className="p-1 text-muted-foreground hover:text-foreground transition-colors">
+        <button
+          type="button"
+          onClick={() => setShowSettings(true)}
+          aria-label="Profile settings"
+          className="p-1 text-muted-foreground hover:text-foreground transition-colors rounded"
+        >
           <Settings className="w-4 h-4" />
         </button>
       </div>

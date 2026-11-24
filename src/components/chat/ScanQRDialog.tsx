@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useRef } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -7,9 +7,8 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { toast } from 'sonner';
-import { Camera, Loader2, Upload, ScanLine } from 'lucide-react';
-import jsQR from 'jsqr';
+import { Camera, Upload, ScanLine } from 'lucide-react';
+import { useQRScanner } from '@/hooks/use-qr-scanner';
 
 interface ScanQRDialogProps {
   open: boolean;
@@ -20,105 +19,15 @@ interface ScanQRDialogProps {
 }
 
 export function ScanQRDialog({ open, onOpenChange, onResult, title, description }: ScanQRDialogProps) {
-  const [scanning, setScanning] = useState(false);
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const scanningRef = useRef(false);
-  const rafRef = useRef<number | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const stopCamera = () => {
-    scanningRef.current = false;
-    if (rafRef.current !== null) {
-      cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
-    }
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(t => t.stop());
-      streamRef.current = null;
-    }
-    setScanning(false);
-  };
-
-  useEffect(() => {
-    if (!open) stopCamera();
-  }, [open]);
-
-  const decodeFromCanvas = (imageData: ImageData): string | null => {
-    const code = jsQR(imageData.data, imageData.width, imageData.height);
-    return code?.data || null;
-  };
-
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.naturalWidth;
-        canvas.height = img.naturalHeight;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) return;
-        ctx.drawImage(img, 0, 0);
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const result = decodeFromCanvas(imageData);
-        if (result) {
-          onOpenChange(false);
-          onResult(result);
-        } else {
-          toast.error('Could not decode QR code from image');
-        }
-      };
-      img.src = event.target?.result as string;
-    };
-    reader.readAsDataURL(file);
-    e.target.value = '';
-  };
-
-  const startCamera = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-      streamRef.current = stream;
-      setScanning(true);
-      scanningRef.current = true;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-        scanFrame();
-      }
-    } catch {
-      toast.error('Camera access denied or unavailable');
-    }
-  };
-
-  const scanFrame = () => {
-    if (!scanningRef.current || !videoRef.current || !streamRef.current) return;
-    const video = videoRef.current;
-    if (video.readyState < video.HAVE_ENOUGH_DATA) {
-      rafRef.current = requestAnimationFrame(scanFrame);
-      return;
-    }
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) {
-      rafRef.current = requestAnimationFrame(scanFrame);
-      return;
-    }
-    ctx.drawImage(video, 0, 0);
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    const result = decodeFromCanvas(imageData);
-    if (result) {
-      stopCamera();
+  const { scanning, videoRef, startCamera, stopCamera, handleFileUpload } = useQRScanner({
+    open,
+    onDecoded: (result) => {
       onOpenChange(false);
       onResult(result);
-    } else {
-      rafRef.current = requestAnimationFrame(scanFrame);
-    }
-  };
+    },
+  });
 
   return (
     <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) stopCamera(); }}>
@@ -139,6 +48,7 @@ export function ScanQRDialog({ open, onOpenChange, onResult, title, description 
               <video ref={videoRef} className="w-full h-64 object-cover" playsInline muted />
               <div className="absolute inset-0 border-2 border-primary/50 rounded-lg pointer-events-none" />
               <Button
+                type="button"
                 variant="outline"
                 size="sm"
                 onClick={stopCamera}
@@ -149,22 +59,27 @@ export function ScanQRDialog({ open, onOpenChange, onResult, title, description 
             </div>
           ) : (
             <div className="space-y-3">
-              <Button onClick={startCamera} variant="outline" className="w-full gap-2">
+              <Button type="button" onClick={startCamera} variant="outline" className="w-full gap-2">
                 <Camera className="w-4 h-4" />
                 Open Camera
               </Button>
-              <div className="relative">
-                <Button variant="outline" className="w-full gap-2" disabled>
-                  <Upload className="w-4 h-4" />
-                  Upload QR Image
-                </Button>
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleFileUpload}
-                  className="absolute inset-0 opacity-0 cursor-pointer"
-                />
-              </div>
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full gap-2"
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <Upload className="w-4 h-4" />
+                Upload QR Image
+              </Button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                onChange={handleFileUpload}
+                className="sr-only"
+                aria-label="Upload QR code image"
+              />
             </div>
           )}
         </div>

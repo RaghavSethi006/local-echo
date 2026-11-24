@@ -18,34 +18,34 @@ interface P2PContextType {
   currentChannel: Channel | null;
   messages: Message[];
   onlinePeers: PeerId[];
-  
+
   // View mode
   viewMode: ViewMode;
   setViewMode: (mode: ViewMode) => void;
-  
+
   // DM State
   dmConversations: DMConversation[];
   currentDMPeer: PeerId | null;
   dmMessages: DirectMessage[];
   availablePeersForDM: PeerId[];
-  
+
   // Actions
   initialize: (username: string) => Promise<void>;
   createServer: (input: string | CreateCommunityInput) => Promise<Server>;
   joinServer: (inviteCode: string) => Promise<void>;
-  selectServer: (serverId: string) => void;
+  selectServer: (serverId: string, preferredChannelId?: string) => void;
   selectChannel: (channelId: string) => void;
   sendMessage: (content: string) => Promise<void>;
   loadOlderMessages: () => Promise<void>;
   generateInvite: () => Promise<string>;
-  disconnect: () => void;
+  disconnect: () => Promise<void>;
 
   // Server customization (host only)
   isCurrentServerHost: boolean;
   updateCurrentServer: (patch: { name?: string; icon?: string; channelOps?: ChannelOp[]; configPatch?: CommunityConfigPatch }) => Promise<void>;
   leaveCurrentServer: () => Promise<void>;
   deleteCurrentServer: () => Promise<void>;
-  
+
   // DM Actions
   openDM: (peer: PeerId) => void;
   sendDM: (content: string) => Promise<void>;
@@ -57,6 +57,7 @@ interface P2PContextType {
   // Voice
   isInVoiceChannel: boolean;
   muted: boolean;
+  activeVoicePeers: PeerId[];
   joinVoiceChannel: (serverId: string, channelId: string) => Promise<void>;
   leaveVoiceChannel: () => Promise<void>;
   toggleMute: () => boolean;
@@ -67,6 +68,18 @@ interface P2PContextType {
 }
 
 const P2PContext = createContext<P2PContextType | null>(null);
+
+function pickDefaultChannelId(server: Server | undefined, preferredChannelId?: string): string | null {
+  if (!server) return null;
+  if (preferredChannelId && server.channels.some(c => c.id === preferredChannelId)) {
+    return preferredChannelId;
+  }
+  return (
+    server.channels.find(c => c.type === 'text')?.id ??
+    server.channels[0]?.id ??
+    null
+  );
+}
 
 export function P2PProvider({ children }: { children: ReactNode }) {
   const [network, setNetwork] = useState<P2PNetwork | null>(null);
@@ -79,10 +92,10 @@ export function P2PProvider({ children }: { children: ReactNode }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [onlinePeers, setOnlinePeers] = useState<PeerId[]>([]);
   const [hasStoredIdentity, setHasStoredIdentity] = useState(false);
-  
+
   // View mode (servers or DMs)
   const [viewMode, setViewMode] = useState<ViewMode>('servers');
-  
+
   // DM State
   const [dmConversations, setDmConversations] = useState<DMConversation[]>([]);
   const [currentDMPeerId, setCurrentDMPeerId] = useState<string | null>(null);
@@ -92,6 +105,7 @@ export function P2PProvider({ children }: { children: ReactNode }) {
   const currentChannelIdRef = useRef<string | null>(null);
   const currentDMPeerIdRef = useRef<string | null>(null);
   const networkRef = useRef<P2PNetwork | null>(null);
+  const serversRef = useRef<Server[]>([]);
 
   const currentServer = useMemo(
     () => servers.find(s => s.id === currentServerId) || null,
@@ -101,15 +115,24 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     () => currentServer?.channels.find(c => c.id === currentChannelId) || null,
     [currentServer, currentChannelId]
   );
-  const currentDMPeer = dmConversations.find(c => c.peerId.id === currentDMPeerId)?.peerId || null;
+  const currentDMPeer = useMemo(
+    () => dmConversations.find(c => c.peerId.id === currentDMPeerId)?.peerId || null,
+    [dmConversations, currentDMPeerId]
+  );
 
   // Voice state
   const [isInVoiceChannel, setIsInVoiceChannel] = useState(false);
   const [muted, setMuted] = useState(false);
+  const [activeVoicePeers, setActiveVoicePeers] = useState<PeerId[]>([]);
 
   const setNetworkState = useCallback((net: P2PNetwork | null) => {
     setNetwork(net);
     networkRef.current = net;
+  }, []);
+
+  const setServersState = useCallback((nextServers: Server[]) => {
+    setServers(nextServers);
+    serversRef.current = nextServers;
   }, []);
 
   const setCurrentServerIdState = useCallback((id: string | null) => {
@@ -129,11 +152,13 @@ export function P2PProvider({ children }: { children: ReactNode }) {
 
   // Check for stored identity on mount
   useEffect(() => {
-    Storage.loadIdentity().then(identity => {
-      if (identity) {
-        setHasStoredIdentity(true);
-      }
-    }).catch(() => {});
+    Storage.loadIdentity()
+      .then(identity => {
+        if (identity) {
+          setHasStoredIdentity(true);
+        }
+      })
+      .catch(() => {});
   }, []);
 
   // Handle P2P events
@@ -156,26 +181,29 @@ export function P2PProvider({ children }: { children: ReactNode }) {
         break;
       case 'peer-joined':
         if (net) {
+          setConnectionStatus(net.getConnectionStatus());
           setOnlinePeers(net.getOnlinePeers());
-          setServers(net.getServers());
+          setServersState(net.getServers());
           setAvailablePeersForDM(net.getAvailablePeersForDM());
         }
         break;
       case 'peer-left':
         if (net) {
+          setConnectionStatus(net.getConnectionStatus());
           setOnlinePeers(net.getOnlinePeers());
-          setServers(net.getServers());
+          setServersState(net.getServers());
+          setActiveVoicePeers(net.getActiveVoicePeers());
         }
         break;
       case 'host-changed':
         if (net) {
           setConnectionStatus(net.getConnectionStatus());
-          setServers(net.getServers());
+          setServersState(net.getServers());
         }
         break;
       case 'dm-message':
         if (net) {
-          const payload = event.payload as { dm?: DirectMessage; incoming?: boolean } | { peerId?: string; connectionType?: string } | { merged?: number } | DirectMessage;
+          const payload = event.payload as { dm?: DirectMessage; incoming?: boolean } | DirectMessage;
           const dm = (payload as { dm?: DirectMessage }).dm || (payload as DirectMessage);
           const incoming = Boolean((payload as { incoming?: boolean }).incoming);
 
@@ -198,20 +226,21 @@ export function P2PProvider({ children }: { children: ReactNode }) {
         break;
       case 'server-updated':
         if (net) {
-          setServers(net.getServers());
+          setServersState(net.getServers());
         }
         break;
       case 'server-deleted':
         if (net) {
           const remaining = net.getServers();
-          setServers(remaining);
+          setServersState(remaining);
           const deletedId = (event.payload as { serverId?: string })?.serverId;
           if (deletedId === serverId) {
             const next = remaining[0];
             if (next) {
+              const nextChannelId = pickDefaultChannelId(next);
               setCurrentServerIdState(next.id);
-              setCurrentChannelIdState(next.channels[0]?.id || null);
-              setMessages(net.getMessages(next.id, next.channels[0]?.id || ''));
+              setCurrentChannelIdState(nextChannelId);
+              setMessages(nextChannelId ? net.getMessages(next.id, nextChannelId) : []);
             } else {
               setCurrentServerIdState(null);
               setCurrentChannelIdState(null);
@@ -224,19 +253,17 @@ export function P2PProvider({ children }: { children: ReactNode }) {
       case 'sync-response':
         if (net) {
           const updatedServers = net.getServers();
-          setServers(updatedServers);
+          setConnectionStatus(net.getConnectionStatus());
+          setServersState(updatedServers);
           setOnlinePeers(net.getOnlinePeers());
           setAvailablePeersForDM(net.getAvailablePeersForDM());
 
           if (serverId) {
             const updatedServer = updatedServers.find(s => s.id === serverId);
             const channelStillValid = updatedServer?.channels.find(c => c.id === channelId);
-            const resolvedChannelId = channelStillValid?.id
-              ?? updatedServer?.channels.filter(c => c.type === 'text')[0]?.id
-              ?? updatedServer?.channels[0]?.id
-              ?? null;
+            const resolvedChannelId = channelStillValid?.id ?? pickDefaultChannelId(updatedServer);
 
-            if (resolvedChannelId && resolvedChannelId !== channelId) {
+            if (resolvedChannelId !== channelId) {
               setCurrentChannelIdState(resolvedChannelId);
             }
             const finalChannelId = resolvedChannelId || channelId;
@@ -264,11 +291,12 @@ export function P2PProvider({ children }: { children: ReactNode }) {
         if (net) {
           setIsInVoiceChannel(net.isInVoiceChannel());
           setMuted(net.isMuted());
+          setActiveVoicePeers(net.getActiveVoicePeers());
         }
         break;
       }
     }
-  }, []);
+  }, [setCurrentChannelIdState, setCurrentServerIdState, setServersState]);
 
   // Subscribe to events when network changes
   useEffect(() => {
@@ -286,6 +314,7 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     } catch {
       logger.warn('[P2P] Failed to parse VITE_ICE_SERVERS env var');
     }
+
     const net = new P2PNetwork(username, existingId, {
       signalingHost: import.meta.env.VITE_PEERJS_HOST as string | undefined,
       signalingPort: import.meta.env.VITE_PEERJS_PORT ? Number(import.meta.env.VITE_PEERJS_PORT) : undefined,
@@ -294,38 +323,32 @@ export function P2PProvider({ children }: { children: ReactNode }) {
       iceServers,
     });
     await net.initialize();
-    
-    // Load persisted data
     await net.loadPersistedData();
-    
-    // Save identity
     await net.persistIdentity();
-    
+
     setNetworkState(net);
     setLocalPeer(net.getLocalPeer());
     setIsInitialized(true);
-    setConnectionStatus('disconnected');
+    setConnectionStatus(net.getConnectionStatus());
     setHasStoredIdentity(true);
 
-    // Restore servers and messages from persisted data
     const restoredServers = net.getServers();
-    setServers(restoredServers);
-    
+    setServersState(restoredServers);
+
     if (restoredServers.length > 0) {
       const firstServer = restoredServers[0];
+      const firstChannel = pickDefaultChannelId(firstServer);
       setCurrentServerIdState(firstServer.id);
-      const firstChannel = firstServer.channels[0]?.id || 'general';
       setCurrentChannelIdState(firstChannel);
-      setMessages(net.getMessages(firstServer.id, firstChannel));
+      setMessages(firstChannel ? net.getMessages(firstServer.id, firstChannel) : []);
     }
 
-    // Restore DM conversations
     setDmConversations(net.getDMConversations());
     setOnlinePeers(net.getOnlinePeers());
     setAvailablePeersForDM(net.getAvailablePeersForDM());
-    
+
     return net;
-  }, []);
+  }, [setCurrentChannelIdState, setCurrentServerIdState, setNetworkState, setServersState]);
 
   const initialize = useCallback(async (username: string) => {
     await initializeNetwork(username);
@@ -339,63 +362,66 @@ export function P2PProvider({ children }: { children: ReactNode }) {
 
   const createServer = useCallback(async (input: string | CreateCommunityInput) => {
     if (!network) throw new Error('Network not initialized');
-    
+
     const server = await network.createServer(input);
-    setServers(network.getServers());
+    const defaultChannelId = pickDefaultChannelId(server);
+    setServersState(network.getServers());
     setCurrentServerIdState(server.id);
-    setCurrentChannelIdState(server.channels[0]?.id || null);
+    setCurrentChannelIdState(defaultChannelId);
     setConnectionStatus(network.getConnectionStatus());
     setOnlinePeers(network.getOnlinePeers());
     setMessages([]);
     setViewMode('servers');
     setAvailablePeersForDM(network.getAvailablePeersForDM());
-    
+
     return server;
-  }, [network]);
+  }, [network, setCurrentChannelIdState, setCurrentServerIdState, setServersState]);
 
   const joinServer = useCallback(async (inviteCode: string) => {
     if (!network) throw new Error('Network not initialized');
-    
+
     logger.log('[P2P] Joining server with invite code');
     setConnectionStatus('connecting');
-    
+
     try {
       const server = await network.joinServer(inviteCode);
-      
-      setServers(network.getServers());
+      const defaultChannelId = pickDefaultChannelId(server);
+
+      setServersState(network.getServers());
       setCurrentServerIdState(server.id);
-      setCurrentChannelIdState(null);
+      setCurrentChannelIdState(defaultChannelId);
       setConnectionStatus(network.getConnectionStatus());
       setOnlinePeers(network.getOnlinePeers());
-      setMessages([]);
+      setMessages(defaultChannelId ? network.getMessages(server.id, defaultChannelId) : []);
       setViewMode('servers');
       setAvailablePeersForDM(network.getAvailablePeersForDM());
     } catch (error) {
-      setConnectionStatus('disconnected');
+      setConnectionStatus(network.getConnectionStatus());
       logger.error('Failed to join server:', error);
       throw error;
     }
-  }, [network]);
+  }, [network, setCurrentChannelIdState, setCurrentServerIdState, setServersState]);
 
-  const selectServer = useCallback((serverId: string) => {
+  const selectServer = useCallback((serverId: string, preferredChannelId?: string) => {
     setCurrentServerIdState(serverId);
     setCurrentDMPeerIdState(null);
     setViewMode('servers');
-    const server = servers.find(s => s.id === serverId);
-    if (server) {
-      setCurrentChannelIdState(server.channels[0]?.id || null);
-      if (network) {
-        setMessages(network.getMessages(serverId, server.channels[0]?.id || ''));
-      }
+    const server = serversRef.current.find(s => s.id === serverId);
+    const resolvedChannelId = pickDefaultChannelId(server, preferredChannelId);
+    setCurrentChannelIdState(resolvedChannelId);
+    if (network && resolvedChannelId) {
+      setMessages(network.getMessages(serverId, resolvedChannelId));
+    } else {
+      setMessages([]);
     }
-  }, [servers, network]);
+  }, [network, setCurrentChannelIdState, setCurrentDMPeerIdState, setCurrentServerIdState]);
 
   const selectChannel = useCallback((channelId: string) => {
     setCurrentChannelIdState(channelId);
-    if (network && currentServerId) {
-      setMessages(network.getMessages(currentServerId, channelId));
+    if (network && currentServerIdRef.current) {
+      setMessages(network.getMessages(currentServerIdRef.current, channelId));
     }
-  }, [network, currentServerId]);
+  }, [network, setCurrentChannelIdState]);
 
   const getAllMessages = useCallback((): Message[] => {
     return network?.getAllMessages() || [];
@@ -403,7 +429,7 @@ export function P2PProvider({ children }: { children: ReactNode }) {
 
   const sendMessage = useCallback(async (content: string) => {
     if (!network || !currentServerId || !currentChannelId) return;
-    
+
     await network.sendMessage(currentServerId, currentChannelId, content);
     setMessages(network.getMessages(currentServerId, currentChannelId));
   }, [network, currentServerId, currentChannelId]);
@@ -429,39 +455,37 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     async (patch: { name?: string; icon?: string; channelOps?: ChannelOp[]; configPatch?: CommunityConfigPatch }) => {
       if (!network || !currentServerId) throw new Error('No server selected');
       await network.updateServer(currentServerId, patch);
-      setServers(network.getServers());
-      // If the current channel was deleted, fall back to first remaining
+      setServersState(network.getServers());
       const refreshed = network.getServer(currentServerId);
       if (refreshed && currentChannelId && !refreshed.channels.find(c => c.id === currentChannelId)) {
-      const fallback = refreshed.channels[0]?.id || null;
-      setCurrentChannelIdState(fallback);
+        const fallback = pickDefaultChannelId(refreshed);
+        setCurrentChannelIdState(fallback);
         if (fallback) setMessages(network.getMessages(currentServerId, fallback));
         else setMessages([]);
       }
     },
-    [network, currentServerId, currentChannelId]
+    [network, currentServerId, currentChannelId, setCurrentChannelIdState, setServersState]
   );
 
   const leaveCurrentServer = useCallback(async () => {
     if (!network || !currentServerId) return;
     await network.leaveServer(currentServerId);
-    // server-deleted event handler will reset selection
-    setServers(network.getServers());
-  }, [network, currentServerId]);
+    setServersState(network.getServers());
+  }, [network, currentServerId, setServersState]);
 
   const deleteCurrentServer = useCallback(async () => {
     if (!network || !currentServerId) return;
     await network.deleteServerAsHost(currentServerId);
-    setServers(network.getServers());
-  }, [network, currentServerId]);
+    setServersState(network.getServers());
+  }, [network, currentServerId, setServersState]);
 
   // DM Actions
   const openDM = useCallback((peer: PeerId) => {
     if (!network) return;
-    
+
     network.getOrCreateDMConversation(peer);
     network.initiateDMConnection(peer.id);
-    
+
     setCurrentDMPeerIdState(peer.id);
     setCurrentServerIdState(null);
     setCurrentChannelIdState(null);
@@ -469,7 +493,7 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     setDmConversations(network.getDMConversations());
     setDmMessages(network.getDMMessages(peer.id));
     network.markDMAsRead(peer.id);
-  }, [network]);
+  }, [network, setCurrentChannelIdState, setCurrentDMPeerIdState, setCurrentServerIdState]);
 
   const startNewDM = useCallback((peer: PeerId) => {
     openDM(peer);
@@ -484,7 +508,7 @@ export function P2PProvider({ children }: { children: ReactNode }) {
 
   const sendDM = useCallback(async (content: string) => {
     if (!network || !currentDMPeerId) return;
-    
+
     await network.sendDM(currentDMPeerId, content);
     setDmMessages(network.getDMMessages(currentDMPeerId));
     setDmConversations(network.getDMConversations());
@@ -503,15 +527,18 @@ export function P2PProvider({ children }: { children: ReactNode }) {
 
   // Voice actions
   const joinVoiceChannel = useCallback(async (serverId: string, channelId: string) => {
-    await network?.joinVoiceChannel(serverId, channelId);
-    setIsInVoiceChannel(network?.isInVoiceChannel() ?? false);
-    setMuted(network?.isMuted() ?? false);
+    if (!network) return;
+    await network.joinVoiceChannel(serverId, channelId);
+    setIsInVoiceChannel(network.isInVoiceChannel());
+    setMuted(network.isMuted());
+    setActiveVoicePeers(network.getActiveVoicePeers());
   }, [network]);
 
   const leaveVoiceChannel = useCallback(async () => {
     await network?.leaveVoiceChannel();
     setIsInVoiceChannel(false);
     setMuted(false);
+    setActiveVoicePeers([]);
   }, [network]);
 
   const toggleMuteCb = useCallback(() => {
@@ -530,7 +557,7 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     setIsInitialized(false);
     setConnectionStatus('disconnected');
     setLocalPeer(null);
-    setServers([]);
+    setServersState([]);
     setCurrentServerIdState(null);
     setCurrentChannelIdState(null);
     setMessages([]);
@@ -538,9 +565,12 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     setDmConversations([]);
     setCurrentDMPeerIdState(null);
     setDmMessages([]);
+    setActiveVoicePeers([]);
+    setIsInVoiceChannel(false);
+    setMuted(false);
     setViewMode('servers');
     setHasStoredIdentity(false);
-  }, [network]);
+  }, [network, setCurrentChannelIdState, setCurrentDMPeerIdState, setCurrentServerIdState, setNetworkState, setServersState]);
 
   return (
     <P2PContext.Provider
@@ -584,6 +614,7 @@ export function P2PProvider({ children }: { children: ReactNode }) {
         deleteCurrentServer,
         isInVoiceChannel,
         muted,
+        activeVoicePeers,
         joinVoiceChannel,
         leaveVoiceChannel,
         toggleMute: toggleMuteCb,
