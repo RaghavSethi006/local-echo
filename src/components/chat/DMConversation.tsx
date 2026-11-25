@@ -4,7 +4,8 @@ import { cn } from '@/lib/utils';
 import { getAvatarColor } from '@/lib/avatar-color';
 import { formatMessageTime, formatShortTime } from '@/lib/date';
 import { MessageText } from './MessageText';
-import { Check, Copy, Lock, MessageCircle, Radio, Send, Wifi } from 'lucide-react';
+import { SafetyNumberDialog } from './SafetyNumberDialog';
+import { Check, Copy, Lock, MessageCircle, Radio, Send, ShieldAlert, ShieldCheck, Wifi } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { toast } from 'sonner';
 
@@ -14,10 +15,18 @@ export function DMConversation() {
   const [content, setContent] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [safetyOpen, setSafetyOpen] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const currentConversation = dmConversations.find(c => c.peerId.id === currentDMPeer?.id);
+  const keyChanged = Boolean(currentConversation?.keyChanged);
+  const isVerified = Boolean(
+    currentDMPeer?.publicKey &&
+      currentConversation?.verifiedPublicKey &&
+      currentConversation.verifiedPublicKey === currentDMPeer.publicKey &&
+      !keyChanged
+  );
 
   // Auto-scroll to bottom on new messages
   useEffect(() => {
@@ -111,7 +120,7 @@ export function DMConversation() {
       case 'relay':
         return { icon: Radio, label: 'Relayed', color: 'text-warning' };
       default:
-        return { icon: Lock, label: 'Encrypted', color: 'text-muted-foreground' };
+        return { icon: Lock, label: 'E2E Encrypted', color: 'text-muted-foreground' };
     }
   };
 
@@ -141,7 +150,7 @@ export function DMConversation() {
     <main className="flex-1 flex flex-col bg-background min-w-0">
       {/* Header — desktop only */}
       <header className="hidden md:flex h-12 px-4 items-center justify-between border-b border-border shrink-0">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 min-w-0">
           <div className="relative">
             <div className={cn(
               'w-8 h-8 rounded-full flex items-center justify-center',
@@ -151,31 +160,83 @@ export function DMConversation() {
               {currentDMPeer.username.charAt(0).toUpperCase()}
             </div>
           </div>
-          <div>
+          <div className="min-w-0 truncate">
             <span className="font-semibold text-foreground">{currentDMPeer.username}</span>
             {currentConversation?.isTyping && (
               <span className="ml-2 text-sm text-primary italic">typing...</span>
             )}
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3">
           <Tooltip>
             <TooltipTrigger asChild>
-              <div className={cn('flex items-center gap-1.5 px-2 py-1 rounded-md bg-secondary/50', connInfo.color)}>
+              <span className={cn('flex items-center gap-1.5 text-xs', connInfo.color)}>
                 <connInfo.icon className="w-3.5 h-3.5" />
-                <span className="text-xs">{connInfo.label}</span>
-              </div>
+                <span>{connInfo.label}</span>
+              </span>
             </TooltipTrigger>
             <TooltipContent>
               {connInfo.label === 'Direct P2P'
-                ? 'Connected directly — no relay'
+                ? 'Direct WebRTC DataChannel · End-to-end encrypted (ECDH + AES-256-GCM)'
                 : connInfo.label === 'Relayed'
-                  ? 'Routed through server host (end-to-end encrypted)'
-                  : 'End-to-end encrypted'}
+                  ? 'Routed through server host as opaque E2E ciphertext'
+                  : 'End-to-end encrypted with ECDH + AES-256-GCM'}
             </TooltipContent>
           </Tooltip>
+
+          <span className="text-border">·</span>
+
+          <button
+            type="button"
+            onClick={() => setSafetyOpen(true)}
+            aria-label="Verify safety number"
+            className={cn(
+              'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors',
+              keyChanged
+                ? 'border-warning/50 bg-warning/10 text-warning hover:bg-warning/20'
+                : isVerified
+                  ? 'border-success/40 bg-success/10 text-success hover:bg-success/20'
+                  : 'border-border bg-secondary/50 text-muted-foreground hover:text-foreground hover:bg-secondary'
+            )}
+          >
+            {keyChanged ? (
+              <>
+                <ShieldAlert className="w-3.5 h-3.5" />
+                <span>Key Changed</span>
+              </>
+            ) : isVerified ? (
+              <>
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>Verified</span>
+              </>
+            ) : (
+              <>
+                <Lock className="w-3.5 h-3.5" />
+                <span>Verify Key</span>
+              </>
+            )}
+          </button>
         </div>
       </header>
+
+      {/* Key-changed warning bar */}
+      {keyChanged && (
+        <div className="px-4 py-2 bg-warning/10 border-b border-warning/30 flex items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2 text-foreground min-w-0">
+            <ShieldAlert className="w-4 h-4 text-warning shrink-0" />
+            <span className="truncate">
+              <strong>{currentDMPeer.username}</strong>&apos;s encryption key changed. Verify their safety number before trusting new messages.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setSafetyOpen(true)}
+            className="text-warning font-medium hover:underline shrink-0"
+          >
+            Review Safety Number
+          </button>
+        </div>
+      )}
 
       {/* Messages */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
@@ -194,10 +255,18 @@ export function DMConversation() {
               <p className="text-sm text-muted-foreground mt-1 text-center">
                 This is the beginning of your direct message history with <strong>{currentDMPeer.username}</strong>.
               </p>
-              <div className="flex items-center gap-2 mt-3 px-3 py-1.5 rounded-full bg-secondary/50">
-                <Lock className="w-3.5 h-3.5 text-primary" />
-                <span className="text-xs text-muted-foreground">Messages are end-to-end encrypted</span>
-              </div>
+              <p className="flex items-center gap-1.5 mt-3 text-xs text-muted-foreground text-center">
+                <Lock className="w-3.5 h-3.5 text-primary shrink-0" />
+                <span>End-to-end encrypted (ECDH + AES-256-GCM)</span>
+                <span>·</span>
+                <button
+                  type="button"
+                  onClick={() => setSafetyOpen(true)}
+                  className="text-primary hover:underline font-medium"
+                >
+                  {isVerified ? 'Verified safety number' : 'Verify safety number'}
+                </button>
+              </p>
             </div>
           </div>
 
@@ -293,14 +362,31 @@ export function DMConversation() {
             <Send className="w-5 h-5" />
           </button>
         </div>
-        {/* Connection badge on mobile */}
-        <div className="md:hidden flex items-center justify-center mt-2">
-          <div className={cn('inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-secondary/50', connInfo.color)}>
+        {/* Connection + Safety status on mobile */}
+        <div className="md:hidden flex items-center justify-center gap-2 mt-2 text-[10px]">
+          <span className={cn('inline-flex items-center gap-1', connInfo.color)}>
             <connInfo.icon className="w-3 h-3" />
-            <span className="text-[10px]">{connInfo.label}</span>
-          </div>
+            <span>{connInfo.label}</span>
+          </span>
+          <span className="text-border">·</span>
+          <button
+            type="button"
+            onClick={() => setSafetyOpen(true)}
+            className={cn(
+              'inline-flex items-center gap-1 font-medium',
+              keyChanged ? 'text-warning' : isVerified ? 'text-success' : 'text-muted-foreground hover:text-foreground'
+            )}
+          >
+            {keyChanged ? 'Key Changed' : isVerified ? 'Verified' : 'Verify Key'}
+          </button>
         </div>
       </form>
+
+      <SafetyNumberDialog
+        open={safetyOpen}
+        onOpenChange={setSafetyOpen}
+        peer={currentDMPeer}
+      />
     </main>
   );
 }

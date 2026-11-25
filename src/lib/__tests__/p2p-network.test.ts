@@ -13,11 +13,19 @@ vi.mock('peerjs', () => {
   const mockPeer = {
     id: 'test-peer',
     connect: vi.fn(() => mockConn),
-    on: vi.fn(),
+    on: vi.fn((event: string, cb: (arg?: unknown) => void) => {
+      if (event === 'open') {
+        queueMicrotask(() => cb('local-peer-id'));
+      }
+    }),
     destroy: vi.fn(),
     reconnect: vi.fn(),
   };
-  return { default: vi.fn(() => mockPeer) };
+  return {
+    default: vi.fn(function () {
+      return mockPeer;
+    }),
+  };
 });
 
 const mockStorage = vi.hoisted(() => ({
@@ -322,6 +330,55 @@ describe('P2PNetwork', () => {
     it('should return empty array for nonexistent channel', async () => {
       const msgs = await network.loadOlderMessages('s1', 'c1');
       expect(msgs).toEqual([]);
+    });
+  });
+
+  describe('DM key verification & diagnostics', () => {
+    it('computes Safety Number, verifies peer, and flags unexpected key rotation', async () => {
+      const { generateKeyPair } = await import('../crypto');
+      await network.initialize();
+      const bobKeys1 = await generateKeyPair();
+      const bobKeys2 = await generateKeyPair();
+
+      network.getOrCreateDMConversation({
+        id: 'bob-peer-id',
+        username: 'Bob',
+        publicKey: bobKeys1.publicKeyString,
+      });
+
+      const initialInfo = await network.getDMSafetyInfo('bob-peer-id');
+      expect(initialInfo?.safetyNumber).toMatch(/^(\d{5} ){11}\d{5}$/);
+      expect(initialInfo?.isVerified).toBe(false);
+      expect(initialInfo?.keyChanged).toBe(false);
+
+      await network.verifyDMPeer('bob-peer-id');
+      const verifiedInfo = await network.getDMSafetyInfo('bob-peer-id');
+      expect(verifiedInfo?.isVerified).toBe(true);
+
+      // Simulate Bob advertising a different ECDH key later
+      network.getOrCreateDMConversation({
+        id: 'bob-peer-id',
+        username: 'Bob',
+        publicKey: bobKeys2.publicKeyString,
+      });
+
+      const rotatedInfo = await network.getDMSafetyInfo('bob-peer-id');
+      expect(rotatedInfo?.keyChanged).toBe(true);
+      expect(rotatedInfo?.isVerified).toBe(false);
+      expect(rotatedInfo?.safetyNumber).not.toBe(verifiedInfo?.safetyNumber);
+
+      await network.unverifyDMPeer('bob-peer-id');
+      const unverifiedInfo = await network.getDMSafetyInfo('bob-peer-id');
+      expect(unverifiedInfo?.isVerified).toBe(false);
+    });
+
+    it('reports connection diagnostics snapshot', () => {
+      const diag = network.getConnectionDiagnostics();
+      expect(diag).toMatchObject({
+        activePeerCount: 0,
+        bulkChannelCount: 0,
+      });
+      expect(typeof diag.signalingEndpoint).toBe('string');
     });
   });
 

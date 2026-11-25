@@ -1,7 +1,8 @@
 import { useRef, useEffect, useState } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { useP2P } from '@/contexts/P2PContext';
-import { ArrowDown, Hash, Loader2, Users } from 'lucide-react';
+import { ArrowDown, Hash, Loader2, Shield, Users } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { MessageInput } from './MessageInput';
 import { MessageItem } from './MessageItem';
 import { VoiceChannelView } from './VoiceChannelView';
@@ -115,9 +116,23 @@ export function MessageArea() {
             </>
           )}
         </div>
-        <div className="flex items-center gap-2 text-muted-foreground text-xs tabular-nums">
-          <Users className="w-4 h-4" />
-          <span>{onlinePeers.length} online</span>
+        <div className="flex items-center gap-3 text-muted-foreground text-xs tabular-nums">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex items-center gap-1.5 cursor-default">
+                <Shield className="w-3.5 h-3.5 text-primary" />
+                <span>WebRTC DTLS · Host-Relayed</span>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              Server channels use WebRTC DTLS transport security and sync through the server host. Use Direct Messages for end-to-end encryption.
+            </TooltipContent>
+          </Tooltip>
+          <span className="text-border">·</span>
+          <span className="inline-flex items-center gap-1.5">
+            <Users className="w-4 h-4" />
+            <span>{onlinePeers.length} online</span>
+          </span>
         </div>
       </header>
 
@@ -149,7 +164,7 @@ export function MessageArea() {
                   </div>
                 </div>
                 <p className="text-sm text-muted-foreground">
-                  Messages sync peer-to-peer across your community via WebRTC without a central server. Your history persists locally on your device.
+                  Channel messages are protected in transit with WebRTC DTLS and synced via the server host. For end-to-end encryption, send a Direct Message.
                 </p>
               </div>
             </div>

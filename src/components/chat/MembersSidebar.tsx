@@ -156,14 +156,14 @@ export function MembersSidebar() {
 
         {/* Connection Info */}
         <div className="pt-4 border-t border-border">
-          <div className="text-xs text-muted-foreground space-y-1">
+          <div className="text-xs text-muted-foreground space-y-1.5">
             <div className="flex items-center justify-between">
               <span>Status</span>
               <span className="capitalize text-foreground">{connectionStatus}</span>
             </div>
             <div className="flex items-center justify-between">
-              <span>Transport</span>
-              <span className="text-foreground">WebRTC P2P</span>
+              <span>Channels</span>
+              <span className="text-foreground">WebRTC DTLS</span>
             </div>
             <div className="flex items-center justify-between">
               <span>Direct Messages</span>

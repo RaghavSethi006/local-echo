@@ -285,7 +285,7 @@ export async function importStorageKey(jwk: JsonWebKey): Promise<CryptoKey> {
     'jwk',
     jwk,
     { name: 'AES-GCM', length: 256 },
-    false,
+    true,
     ['encrypt', 'decrypt']
   );
 }
@@ -294,4 +294,38 @@ export function generateId(): string {
   const array = new Uint8Array(16);
   window.crypto.getRandomValues(array);
   return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Compute a deterministic 60-digit Safety Number from two ECDH public keys.
+ * Sorting keys lexicographically guarantees both peers compute the exact same number.
+ */
+export async function computeSafetyNumber(publicKeyA: string, publicKeyB: string): Promise<string> {
+  const sorted = [publicKeyA.trim(), publicKeyB.trim()].sort();
+  const payload = new TextEncoder().encode(`offgrid-safety-v1:${sorted[0]}:${sorted[1]}`);
+  const digest = await window.crypto.subtle.digest('SHA-256', payload);
+  const bytes = new Uint8Array(digest);
+
+  const groups: string[] = [];
+  for (let i = 0; i < 12; i++) {
+    const offset = i * 2;
+    const b0 = bytes[offset];
+    const b1 = bytes[offset + 1];
+    const b2 = bytes[(offset + 2) % bytes.length];
+    const num = ((b0 << 16) | (b1 << 8) | b2) % 100_000;
+    groups.push(num.toString().padStart(5, '0'));
+  }
+
+  return groups.join(' ');
+}
+
+/**
+ * Derive an 8-character uppercase hex fingerprint for a single public key.
+ */
+export async function formatShortKeyFingerprint(publicKey: string): Promise<string> {
+  const payload = new TextEncoder().encode(publicKey.trim());
+  const digest = await window.crypto.subtle.digest('SHA-256', payload);
+  const bytes = new Uint8Array(digest).slice(0, 4);
+  const hex = Array.from(bytes, b => b.toString(16).padStart(2, '0').toUpperCase()).join('');
+  return `${hex.slice(0, 4)} ${hex.slice(4, 8)}`;
 }

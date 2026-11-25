@@ -190,13 +190,21 @@ export class YjsManager {
           if (!doc) return;
           const remoteSV = fromBase64(msg.sv);
           const update = Y.encodeStateAsUpdate(doc, remoteSV);
-          if (update.byteLength > 0 && this.onSyncOutgoing) {
-            this.onSyncOutgoing({ type: 'yjs-sync-step2', channelKey: msg.channelKey, update: toBase64(update), targetPeerId: fromPeerId });
+          // Empty Yjs state diffs encode as 2 zero bytes [0, 0]; skip sending empty step2 payloads.
+          if (update.byteLength > 2 && this.onSyncOutgoing) {
+            this.onSyncOutgoing(
+              { type: 'yjs-sync-step2', channelKey: msg.channelKey, update: toBase64(update), targetPeerId: fromPeerId },
+              fromPeerId
+            );
           }
-          // Also initiate reverse sync if we haven't yet
-          if (fromPeerId && !this._syncingPeers.has(`${msg.channelKey}:${fromPeerId}`)) {
-            this._syncingPeers.add(`${msg.channelKey}:${fromPeerId}`);
-            this.sendSyncStep1(msg.channelKey, fromPeerId);
+          // Initiate reverse sync at most once per cooldown window to avoid step1/step2 ping-pong.
+          if (fromPeerId) {
+            const syncKey = `${msg.channelKey}:${fromPeerId}`;
+            const now = Date.now();
+            const lastSent = this._lastStep1SentAt.get(syncKey) ?? 0;
+            if (now - lastSent > 5_000) {
+              this.sendSyncStep1(msg.channelKey, fromPeerId);
+            }
           }
           break;
         }
@@ -208,9 +216,6 @@ export class YjsManager {
           Y.applyUpdate(entry.doc, update, 'remote');
           const kind = msg.channelKey.startsWith('dm:') ? 'dm' : 'message';
           this.notifyChange(msg.channelKey, kind);
-          if (fromPeerId) {
-            this._syncingPeers.delete(`${msg.channelKey}:${fromPeerId}`);
-          }
           break;
         }
       }
@@ -219,17 +224,17 @@ export class YjsManager {
     }
   }
 
-  private _syncingPeers = new Set<string>();
+  private _lastStep1SentAt = new Map<string, number>();
 
   /** Send sync step1 to a specific peer, or broadcast if no target given. */
   sendSyncStep1(channelKey: string, targetPeerId?: string): void {
     const entry = this.docs.get(channelKey);
     if (!entry || !this.onSyncOutgoing) return;
+    if (targetPeerId) {
+      this._lastStep1SentAt.set(`${channelKey}:${targetPeerId}`, Date.now());
+    }
     const sv = Y.encodeStateVector(entry.doc);
     this.onSyncOutgoing({ type: 'yjs-sync-step1', channelKey, sv: toBase64(sv), targetPeerId }, targetPeerId);
-    if (targetPeerId) {
-      this._syncingPeers.add(`${channelKey}:${targetPeerId}`);
-    }
   }
 
   async destroy(): Promise<void> {

@@ -1,8 +1,27 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef, useMemo, ReactNode } from 'react';
 import { P2PNetwork } from '@/lib/p2p-network';
-import { Server, Channel, Message, PeerId, P2PEvent, ConnectionStatus, ViewMode, DMConversation, DirectMessage, ChannelOp } from '@/types/p2p';
+import {
+  Server,
+  Channel,
+  Message,
+  PeerId,
+  P2PEvent,
+  ConnectionStatus,
+  ConnectionDiagnostics,
+  ViewMode,
+  DMConversation,
+  DMSafetyInfo,
+  DirectMessage,
+  ChannelOp,
+} from '@/types/p2p';
 import type { CommunityConfigPatch, CreateCommunityInput } from '@/types/community';
 import * as Storage from '@/lib/storage';
+import {
+  clearNetworkOverrides,
+  getEffectiveNetworkConfig,
+  saveNetworkOverrides,
+  type NetworkOverrides,
+} from '@/lib/network-config';
 import { logger } from '@/lib/logger';
 import { sendBrowserNotification } from '@/hooks/use-notifications';
 import { toast } from 'sonner';
@@ -61,6 +80,17 @@ interface P2PContextType {
   joinVoiceChannel: (serverId: string, channelId: string) => Promise<void>;
   leaveVoiceChannel: () => Promise<void>;
   toggleMute: () => boolean;
+
+  // DM Key Verification
+  verifyDMPeer: (peerId: string) => Promise<void>;
+  unverifyDMPeer: (peerId: string) => Promise<void>;
+  getDMSafetyInfo: (peerId: string) => Promise<DMSafetyInfo | null>;
+
+  // Network Settings & Diagnostics
+  diagnostics: ConnectionDiagnostics | null;
+  reconfigureNetwork: (overrides: NetworkOverrides) => Promise<void>;
+  resetNetworkOverrides: () => Promise<void>;
+  reconnectNow: () => Promise<void>;
 
   // Persistence
   hasStoredIdentity: boolean;
@@ -124,6 +154,7 @@ export function P2PProvider({ children }: { children: ReactNode }) {
   const [isInVoiceChannel, setIsInVoiceChannel] = useState(false);
   const [muted, setMuted] = useState(false);
   const [activeVoicePeers, setActiveVoicePeers] = useState<PeerId[]>([]);
+  const [diagnostics, setDiagnostics] = useState<ConnectionDiagnostics | null>(null);
 
   const setNetworkState = useCallback((net: P2PNetwork | null) => {
     setNetwork(net);
@@ -175,7 +206,7 @@ export function P2PProvider({ children }: { children: ReactNode }) {
         if (net && serverId && channelId) {
           const msg = event.payload as Message;
           if (msg.serverId === serverId && msg.channelId === channelId) {
-            setMessages(net.getMessages(serverId, channelId));
+            setMessages([...net.getMessages(serverId, channelId)]);
           }
         }
         break;
@@ -185,6 +216,8 @@ export function P2PProvider({ children }: { children: ReactNode }) {
           setOnlinePeers(net.getOnlinePeers());
           setServersState(net.getServers());
           setAvailablePeersForDM(net.getAvailablePeersForDM());
+          setDmConversations(net.getDMConversations());
+          setDiagnostics(net.getConnectionDiagnostics());
         }
         break;
       case 'peer-left':
@@ -193,12 +226,14 @@ export function P2PProvider({ children }: { children: ReactNode }) {
           setOnlinePeers(net.getOnlinePeers());
           setServersState(net.getServers());
           setActiveVoicePeers(net.getActiveVoicePeers());
+          setDiagnostics(net.getConnectionDiagnostics());
         }
         break;
       case 'host-changed':
         if (net) {
           setConnectionStatus(net.getConnectionStatus());
           setServersState(net.getServers());
+          setDiagnostics(net.getConnectionDiagnostics());
         }
         break;
       case 'dm-message':
@@ -220,8 +255,15 @@ export function P2PProvider({ children }: { children: ReactNode }) {
         }
         break;
       case 'dm-typing':
+      case 'dm-verified':
         if (net) {
           setDmConversations(net.getDMConversations());
+        }
+        break;
+      case 'connection-state-changed':
+        if (net) {
+          setConnectionStatus(net.getConnectionStatus());
+          setDiagnostics(net.getConnectionDiagnostics());
         }
         break;
       case 'server-updated':
@@ -298,29 +340,44 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     }
   }, [setCurrentChannelIdState, setCurrentServerIdState, setServersState]);
 
-  // Subscribe to events when network changes
+  // Subscribe to events and visibility/online wake recovery when network changes
   useEffect(() => {
     if (!network) return;
     networkRef.current = network;
     const unsubscribe = network.addEventListener(handleEvent);
-    return () => unsubscribe();
+
+    const onVisibilityChange = () => {
+      network.handleVisibilityWake();
+    };
+    const onOnline = () => {
+      network.handleOnlineRecovery();
+    };
+    const onUnload = () => {
+      network.handlePageUnload();
+    };
+
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('online', onOnline);
+    window.addEventListener('pagehide', onUnload);
+    window.addEventListener('beforeunload', onUnload);
+
+    return () => {
+      unsubscribe();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('online', onOnline);
+      window.removeEventListener('pagehide', onUnload);
+      window.removeEventListener('beforeunload', onUnload);
+    };
   }, [network, handleEvent]);
 
   const initializeNetwork = useCallback(async (username: string, existingId?: string) => {
-    let iceServers: RTCIceServer[] | undefined;
-    try {
-      const raw = import.meta.env.VITE_ICE_SERVERS as string | undefined;
-      if (raw) iceServers = JSON.parse(raw) as RTCIceServer[];
-    } catch {
-      logger.warn('[P2P] Failed to parse VITE_ICE_SERVERS env var');
-    }
-
+    const effective = getEffectiveNetworkConfig();
     const net = new P2PNetwork(username, existingId, {
-      signalingHost: import.meta.env.VITE_PEERJS_HOST as string | undefined,
-      signalingPort: import.meta.env.VITE_PEERJS_PORT ? Number(import.meta.env.VITE_PEERJS_PORT) : undefined,
-      signalingSecure: import.meta.env.VITE_PEERJS_SECURE === 'true' ? true : undefined,
-      signalingPath: import.meta.env.VITE_PEERJS_PATH as string | undefined,
-      iceServers,
+      signalingHost: effective.signalingHost,
+      signalingPort: effective.signalingPort,
+      signalingSecure: effective.signalingSecure,
+      signalingPath: effective.signalingPath,
+      iceServers: effective.iceServers,
     });
     await net.initialize();
     await net.loadPersistedData();
@@ -330,6 +387,7 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     setLocalPeer(net.getLocalPeer());
     setIsInitialized(true);
     setConnectionStatus(net.getConnectionStatus());
+    setDiagnostics(net.getConnectionDiagnostics());
     setHasStoredIdentity(true);
 
     const restoredServers = net.getServers();
@@ -436,8 +494,10 @@ export function P2PProvider({ children }: { children: ReactNode }) {
 
   const loadOlderMessages = useCallback(async () => {
     if (!network || !currentServerId || !currentChannelId) return;
-    const updated = await network.loadOlderMessages(currentServerId, currentChannelId);
-    setMessages([...updated]);
+    const older = await network.loadOlderMessages(currentServerId, currentChannelId);
+    if (older.length > 0) {
+      setMessages([...network.getMessages(currentServerId, currentChannelId)]);
+    }
   }, [network, currentServerId, currentChannelId]);
 
   const generateInvite = useCallback(async () => {
@@ -548,6 +608,65 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     return m;
   }, [network]);
 
+  const verifyDMPeer = useCallback(async (peerId: string) => {
+    if (!network) throw new Error('Network not initialized');
+    await network.verifyDMPeer(peerId);
+    setDmConversations(network.getDMConversations());
+  }, [network]);
+
+  const unverifyDMPeer = useCallback(async (peerId: string) => {
+    if (!network) throw new Error('Network not initialized');
+    await network.unverifyDMPeer(peerId);
+    setDmConversations(network.getDMConversations());
+  }, [network]);
+
+  const getDMSafetyInfo = useCallback(async (peerId: string) => {
+    if (!network) return null;
+    return network.getDMSafetyInfo(peerId);
+  }, [network]);
+
+  const reconfigureNetwork = useCallback(async (overrides: NetworkOverrides) => {
+    if (!network) throw new Error('Network not initialized');
+    saveNetworkOverrides(overrides);
+    const effective = getEffectiveNetworkConfig();
+    await network.reconfigureNetwork({
+      signalingHost: effective.signalingHost,
+      signalingPort: effective.signalingPort,
+      signalingSecure: effective.signalingSecure,
+      signalingPath: effective.signalingPath,
+      iceServers: effective.iceServers,
+    });
+    setConnectionStatus(network.getConnectionStatus());
+    setOnlinePeers(network.getOnlinePeers());
+    setServersState(network.getServers());
+    setDiagnostics(network.getConnectionDiagnostics());
+  }, [network, setServersState]);
+
+  const resetNetworkOverrides = useCallback(async () => {
+    if (!network) throw new Error('Network not initialized');
+    clearNetworkOverrides();
+    const effective = getEffectiveNetworkConfig();
+    await network.reconfigureNetwork({
+      signalingHost: effective.signalingHost,
+      signalingPort: effective.signalingPort,
+      signalingSecure: effective.signalingSecure,
+      signalingPath: effective.signalingPath,
+      iceServers: effective.iceServers,
+    });
+    setConnectionStatus(network.getConnectionStatus());
+    setOnlinePeers(network.getOnlinePeers());
+    setServersState(network.getServers());
+    setDiagnostics(network.getConnectionDiagnostics());
+  }, [network, setServersState]);
+
+  const reconnectNow = useCallback(async () => {
+    if (!network) return;
+    await network.reconnectNow();
+    setConnectionStatus(network.getConnectionStatus());
+    setOnlinePeers(network.getOnlinePeers());
+    setDiagnostics(network.getConnectionDiagnostics());
+  }, [network]);
+
   const disconnect = useCallback(async () => {
     if (network) {
       await network.clearPersistedData();
@@ -556,6 +675,7 @@ export function P2PProvider({ children }: { children: ReactNode }) {
     setNetworkState(null);
     setIsInitialized(false);
     setConnectionStatus('disconnected');
+    setDiagnostics(null);
     setLocalPeer(null);
     setServersState([]);
     setCurrentServerIdState(null);
@@ -606,6 +726,13 @@ export function P2PProvider({ children }: { children: ReactNode }) {
         markDMAsRead,
         startNewDM,
         startDMByPeerId,
+        verifyDMPeer,
+        unverifyDMPeer,
+        getDMSafetyInfo,
+        diagnostics,
+        reconfigureNetwork,
+        resetNetworkOverrides,
+        reconnectNow,
         hasStoredIdentity,
         restoreSession,
         isCurrentServerHost,

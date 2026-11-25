@@ -56,6 +56,10 @@ export interface StoredDMConversation {
   peerUsername: string;
   peerPublicKey?: string;
   lastSeen: number;
+  verifiedPublicKey?: string;
+  verifiedAt?: number;
+  keyChanged?: boolean;
+  previousPublicKey?: string;
 }
 
 let dbPromise: Promise<IDBDatabase> | null = null;

@@ -1,89 +1,87 @@
-# Manual Verification Checklist
+# Verification Checklist
 
-Run through this checklist with two browser windows (different usernames) to confirm the rt/bulk DataChannel separation works correctly.
+Use both the automated multi-peer Playwright E2E suite and the manual DevTools / `chrome://webrtc-internals` checklist below to verify WebRTC channels, sync, E2E DM verification, network overrides, and host migration.
+
+## Automated Multi-Peer E2E Suite (`npm run test:e2e`)
+
+Run the real two-browser-context Playwright suite (no PeerJS mocks):
+
+```bash
+npm run test:e2e
+```
+
+`playwright.config.ts` automatically starts:
+1. `tests/e2e/signaling-server.mjs`: Local `PeerServer` (`127.0.0.1:9100/offgrid`) + local RFC 5389 UDP STUN responder (`127.0.0.1:3478`).
+2. A dedicated Vite dev server on `http://127.0.0.1:3100` configured with `VITE_PEERJS_*` and `VITE_ICE_SERVERS`.
+
+`tests/e2e/p2p-multi-peer.spec.ts` exercises:
+- Real WebRTC `rt` + `bulk` DataChannel handshake via signed invite
+- Bidirectional channel chat and `WebRTC DTLS · Host-Relayed` clarity
+- Offline period + session resume (`Resume Previous Session`) + Yjs state-vector missed-history catch-up sync
+- E2E DM delivery + identical 60-digit Safety Number comparison and verification toggle
+- Clean host disconnect (`Alice`) -> automatic lowest-ID host election (`Bob` becomes `host`) -> continued messaging
+
+---
+
+## Manual Verification Checklist
+
+Run through this checklist with two browser windows (different profiles) at `http://localhost:3000`:
 
 ## Setup
 
-1. Open **Window A** (incognito/guest profile A) at `http://localhost:3000`
-2. Open **Window B** (incognito/guest profile B) at `http://localhost:3000`
-3. Open DevTools on both windows → **Application** → **Storage** → **IndexedDB** → clear `p2p-chat-store` if dirty
-4. Open `chrome://webrtc-internals` (or Edge equivalent `edge://webrtc-internals`) on **both** windows — this shows all RTCPeerConnections and DataChannels
+1. Open **Window A** (Profile A) at `http://localhost:3000`.
+2. Open **Window B** (Profile B) at `http://localhost:3000`.
+3. Open DevTools on both windows → **Application** → **Storage** → **IndexedDB** → clear `p2p-chat-store` if dirty.
+4. Open `chrome://webrtc-internals` (or `edge://webrtc-internals`) on **both** windows.
 
-## 1. Basic connection
+## 1. Basic Connection & Security Clarity
 
-- [ ] **Window A**: Enter username "Alice", click Start
-- [ ] **Window A**: Create a server → copy invite code
-- [ ] **Window B**: Enter username "Bob", click Start
-- [ ] **Window B**: Join server with invite code from A
+- [ ] **Window A**: Enter username "Alice", click Get Started, create a server, copy invite code.
+- [ ] **Window B**: Enter username "Bob", click Get Started, join server with invite code from A.
+- [ ] Confirm channel header shows **WebRTC DTLS · Host-Relayed** and member sidebar clearly distinguishes **Channels: WebRTC DTLS** vs **Direct Messages: E2E Encrypted**.
 
-## 2. Verify two DataChannels per peer
+## 2. Verify Two DataChannels per Peer
 
 In `chrome://webrtc-internals` on either window:
 
-- [ ] Locate the `RTCPeerConnection` between the two peers
-- [ ] Confirm **two** `RTCDataChannel` instances exist (look under "Data Channels" section)
-- [ ] One channel is the `rt` channel (created first — no special metadata label)
-- [ ] One channel is the `bulk` channel (created second — sent with `channelType: 'bulk'` in metadata)
-- [ ] Both channels show `state: "open"`
+- [ ] Locate the `RTCPeerConnection` between Alice and Bob.
+- [ ] Confirm **two** `RTCDataChannel` instances exist (`rt` created first, `bulk` created second with `channelType: 'bulk'`).
+- [ ] Both channels show `state: "open"`.
 
-## 3. Real-time messages over RT channel
+## 3. Real-Time Messages Over RT Channel
 
-- [ ] **Window A**: Send a chat message "hello world"
-- [ ] **Window B**: Confirm message appears
-- [ ] In `webrtc-internals`, find the **rt** DataChannel and verify `messagesReceived` / `messagesSent` counters incremented for `message` type events
-- [ ] Verify the **bulk** DataChannel counters did **not** increment for this message
+- [ ] **Window A**: Send `"hello world"`.
+- [ ] **Window B**: Confirm message appears.
+- [ ] In `webrtc-internals`, confirm `yjs-update` frames increment counters on the **rt** channel, not **bulk**.
 
-## 4. Sync traffic over bulk channel
+## 4. Missed-History Sync Over Reconnection
 
-- [ ] **Window B**: Disconnect from network (refresh the page)
-- [ ] **Window A**: Send 3 more messages
-- [ ] **Window B**: Rejoin using the invite code
-- [ ] In `webrtc-internals`, during reconnection:
-  - [ ] `sync-response`, `config-sync`, and/or `history-merge` events appear in the **bulk** channel's `messagesReceived`
-  - [ ] The **rt** channel shows only `sync-request`, `history-offer`, `peer-list`, and new chat messages
-- [ ] Verify all 3 missed messages appear in Window B's chat
+- [ ] **Window B**: Close tab or refresh, wait for Window A to show `1 online`.
+- [ ] **Window A**: Send 3 new messages.
+- [ ] **Window B**: Reopen `http://localhost:3000` and click **Resume Previous Session**.
+- [ ] In `webrtc-internals`, confirm `sync-response` / `config-sync` arrive on **bulk**, and all 3 missed messages appear in Window B via Yjs state-vector catch-up.
 
-## 5. Heartbeat isolation
+## 5. Heartbeat Isolation
 
-- [ ] In `webrtc-internals`, observe the **rt** channel receives periodic `ping`/`pong` events (~every 15 seconds)
-- [ ] Verify the **bulk** channel does **not** show ping/pong activity
-- [ ] Keep both windows open for 60 seconds — neither should disconnect (no stale peer timeouts)
+- [ ] In `webrtc-internals`, observe periodic `ping` / `pong` events (~every 15 seconds) on **rt** only (`CHUNK_SIZE = 12_000` in `src/lib/p2p/transport.ts`).
+- [ ] Keep both windows open for 60 seconds — neither disconnects (`45s` stale threshold).
 
-## 6. Chunked payloads on bulk channel
+## 6. Direct Messages & Safety Number Verification
 
-- [ ] **Window A**: Generate enough messages to exceed 12KB — either:
-  - Send many small messages, or
-  - Temporarily lower `CHUNK_SIZE` in `p2p-network.ts` to `1000` to trigger chunking more easily
-- [ ] **Window B**: Reconnect (refresh + rejoin)
-- [ ] In `webrtc-internals`, observe chunk frames (`_chunkId`, `_index`, `_total`) arriving on the **bulk** channel
-- [ ] Verify no chunk frames appear on the **rt** channel
-- [ ] Verify all messages arrive and reassemble correctly in Window B
+- [ ] **Window B**: Open a DM to Alice and send `"hey Alice"`.
+- [ ] **Window A**: Open Direct Messages → select Bob → confirm `"hey Alice"` arrives.
+- [ ] Open **Verify safety number** in the DM header on both windows and verify both display the exact same 60-digit grid (`12 x 5` digits) and matching short Key IDs.
+- [ ] Click **Mark as Verified** in Window B and confirm the DM header badge updates to **Verified**.
 
-## 7. DM over RT
+## 7. Network & Relays Override + Reconnect
 
-- [ ] **Window B**: Open a DM to Alice
-- [ ] **Window B**: Send "hey Alice" in the DM
-- [ ] **Window A**: Confirm DM message appears
-- [ ] In `webrtc-internals`, verify `dm-message` events flow over the **rt** channel only
+- [ ] Open **Settings → Network & Relays** on either window.
+- [ ] Inspect **Connection Diagnostics** (`Signaling`, `Peers / Bulk`, `Endpoint`, `NAT Traversal`).
+- [ ] Click **Reconnect Now** and verify status remains `connected`.
+- [ ] Add an invalid ICE URL (e.g., `http://invalid`) and confirm validation rejects it before saving; reset or save valid STUN/TURN entries (`stun:`/`turn:`).
 
-## 8. Bulk channel failure tolerance
+## 8. Host Migration
 
-> This test validates the fallback to RT-only when bulk fails.
-
-- [ ] Modify `joinServer` in `p2p-network.ts` to **not** create the bulk connection (comment out the bulkConn block)
-- [ ] Restart both windows, reconnect
-- [ ] Verify the app still works correctly — messages, sync, history all function over the single RT channel
-- [ ] Restore the bulk connection code after this test
-
-## 9. Host migration
-
-- [ ] With both peers connected, **Window A** (host) closes their browser
-- [ ] **Window B** should detect host disconnection and initiate host migration
-- [ ] Verify the `bulkConnections` map is empty on the new host (Window B)
-- [ ] **Window A** reopens, rejoins the server
-- [ ] Verify dual DataChannels are re-established
-
-## 10. Cleanup
-
-- [ ] Close both windows
-- [ ] Verify no console errors related to channel cleanup in either session
+- [ ] With both peers connected, **Window A** (host) closes its tab.
+- [ ] **Window B** detects host disconnection, elects itself host, and shows `host` status in the sidebar.
+- [ ] Send a message in **Window B** as the new host and verify it persists locally.

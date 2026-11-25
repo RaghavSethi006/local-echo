@@ -16,6 +16,8 @@ import {
   exportStorageKey,
   importStorageKey,
   generateId,
+  computeSafetyNumber,
+  formatShortKeyFingerprint,
 } from '../crypto';
 
 describe('generateKeyPair', () => {
@@ -179,5 +181,35 @@ describe('shared key derivation', () => {
     const bobExported = await exportStorageKey(bobShared);
 
     expect(aliceExported.k).toBe(bobExported.k);
+  });
+});
+
+describe('Safety Numbers & Fingerprints', () => {
+  it('computes identical 12x5-digit Safety Numbers regardless of key order', async () => {
+    const alice = await generateKeyPair();
+    const bob = await generateKeyPair();
+
+    const numAB = await computeSafetyNumber(alice.publicKeyString, bob.publicKeyString);
+    const numBA = await computeSafetyNumber(bob.publicKeyString, alice.publicKeyString);
+
+    expect(numAB).toBe(numBA);
+    expect(numAB).toMatch(/^(\d{5} ){11}\d{5}$/);
+  });
+
+  it('produces a different Safety Number when a peer key changes', async () => {
+    const alice = await generateKeyPair();
+    const bob = await generateKeyPair();
+    const mallory = await generateKeyPair();
+
+    const numLegit = await computeSafetyNumber(alice.publicKeyString, bob.publicKeyString);
+    const numChanged = await computeSafetyNumber(alice.publicKeyString, mallory.publicKeyString);
+
+    expect(numLegit).not.toBe(numChanged);
+  });
+
+  it('formats 8-character uppercase hex short fingerprints', async () => {
+    const alice = await generateKeyPair();
+    const fp = await formatShortKeyFingerprint(alice.publicKeyString);
+    expect(fp).toMatch(/^[0-9A-F]{4} [0-9A-F]{4}$/);
   });
 });

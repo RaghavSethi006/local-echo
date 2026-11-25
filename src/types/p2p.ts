@@ -40,6 +40,37 @@ export interface DMConversation {
   isTyping: boolean;
   connectionType: 'direct' | 'relay' | 'disconnected';
   lastSeen: number;
+  verifiedPublicKey?: string;
+  verifiedAt?: number;
+  keyChanged?: boolean;
+  previousPublicKey?: string;
+}
+
+export interface DMSafetyInfo {
+  peerId: string;
+  peerUsername: string;
+  localPublicKey?: string;
+  peerPublicKey?: string;
+  localShortFingerprint?: string;
+  peerShortFingerprint?: string;
+  safetyNumber?: string;
+  isVerified: boolean;
+  verifiedAt?: number;
+  keyChanged: boolean;
+  previousPublicKey?: string;
+}
+
+export interface ConnectionDiagnostics {
+  signalingState: 'connected' | 'reconnecting' | 'disconnected';
+  signalingEndpoint: string;
+  iceServerCount: number;
+  hasTurnRelay: boolean;
+  activePeerCount: number;
+  bulkChannelCount: number;
+  lastReconnectAt: number | null;
+  reconnectAttempts: number;
+  usingCustomSignaling: boolean;
+  usingCustomIceServers: boolean;
 }
 
 export interface Channel {
@@ -83,6 +114,7 @@ export interface P2PEvent {
     | 'dm-message'
     | 'dm-typing'
     | 'dm-read'
+    | 'dm-verified'
     | 'server-updated'
     | 'server-deleted'
     | 'peer-list'
@@ -91,6 +123,7 @@ export interface P2PEvent {
     | 'pong'
     | 'yjs-sync'
     | 'yjs-update'
+    | 'connection-state-changed'
     | 'error'
     | 'voice-state-changed'
     | 'host-claim'
